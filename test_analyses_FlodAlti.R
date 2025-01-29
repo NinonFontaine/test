@@ -13,7 +13,7 @@ library(brms)
 # (rebasculé dans le script 1_mise_en_forme_BDD.R)
 # ----------------------------------------------------------------------------------------*
 
-data_long <- read.csv("data_long.csv")
+data_long <- read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/prototool/FloraisonAltitude/data_long.csv")
 
 # Aperçu de la localisation des points
 ggmap::register_google(key="AIzaSyA53J3oEn4CEPw1xB7Grb2Ei_-AYYdcXes")

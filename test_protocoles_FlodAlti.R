@@ -29,7 +29,7 @@ library(readxl)
 # PROJET iNATURALIST (développement n°1) ----
 
 # Localisation des points SPOT Floraison d'Altitude :
-FlodAlti = read.csv("data_long.csv") # Fichier issu de GeoNature (2025_01_13_19h23m43_Floraison_daltitude_private.csv) mis en forme
+FlodAlti = read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/prototool/FloraisonAltitude/data_long.csv") # Fichier issu de GeoNature (2025_01_13_19h23m43_Floraison_daltitude_private.csv) mis en forme
 sites_FlodAlti = FlodAlti %>% distinct(altitude, base_site_name, coord_x_2154, coord_y_2154, id_site, cd_nom, nom_cite, .keep_all = F)
 # NB : on prend les coordonnées en lambert 93, pour pouvoir faire des buffers kilométriques
 

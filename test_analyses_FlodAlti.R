@@ -16,7 +16,8 @@ library(brms)
 data_long <- read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/prototool/FloraisonAltitude/data_long.csv")
 
 # Aperçu de la localisation des points
-ggmap::register_google(key="AIzaSyA53J3oEn4CEPw1xB7Grb2Ei_-AYYdcXes")
+cle_ggmap ="" # à récupérer
+ggmap::register_google(key=cle_ggmap)
 map_base <- get_map(location = c(lon = 6.5, lat = 45.55), zoom = 8,
                      maptype = "terrain", scale = 2)
 ggmap(map_base) +

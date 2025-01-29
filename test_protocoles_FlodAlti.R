@@ -86,7 +86,8 @@ data_CBNA = read.csv("/Users/ninonfontaine/Desktop/projetsR/FloraisonAltitude/da
 data_CBNA = data_CBNA[data_CBNA$cd_nom == 128345,]
 
 # Aperçu de la localisation des points
-ggmap::register_google(key="AIzaSyA53J3oEn4CEPw1xB7Grb2Ei_-AYYdcXes")
+cle_ggmap ="" # à récupérer
+ggmap::register_google(key=cle_ggmap)
 # # Alpes du Nord
 # map_base <- get_map(location = c(lon = 6.5, lat = 45.55), zoom = 8,
 #                     maptype = "terrain", scale = 2)
@@ -105,9 +106,18 @@ ggmap(map_base_MtBlc) +
 #*-------- 0.4. Points pré-envisagés, pour l'écoacoustique notamment (ORCHAMP + Colin) ----
 pts_envisages = read_xlsx("/Users/ninonfontaine/Library/CloudStorage/GoogleDrive-nfontaine@creamontblanc.org/Drive partagés/SoPheno/Sites_spots.xlsx",
                           sheet = "Feuil1", col_types = c("text",rep("numeric",3), rep("text",9)))
+
+# On inclut aussi les gradients ORCHAMP 'doubles', où il y a des camtrap et équipements déjà installés (et qui font un doublon de 
+# conditions similaires)
+ORCHAMP = st_read("/Users/ninonfontaine/Desktop/projetsR/TEST/data/camerainfo_running_20221019.kml")
+ORCHAMP[,c("Long","Lat")] = st_coordinates(ORCHAMP)
+# /!\ on n'a pas les infos des identifiants des points ORCHAMP dans le kml...
+# /!\ il y a des doublons dans les points entre 'pts_envisages' et 'ORCHAMP' !
+
 ggmap(map_base_MtBlc) +
   geom_point(data=data_CBNA, aes(x=lon_wgs84, y=lat_wgs84), col="purple")+
-  geom_point(data=pts_envisages, aes(x=Long, y=Lat))
+  geom_point(data=pts_envisages, aes(x=Long, y=Lat))+
+  geom_point(data=ORCHAMP, aes(x=Long, y=Lat), col="orange")
 
 
 #*---- 1. Diversité des conditions dans le Mont-Blanc où se rencontre la myrtille ----

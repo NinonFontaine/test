@@ -1,4 +1,5 @@
 # test
-repository to test GitHub
+repository to 
+1) test GitHub
+2) save test scripts
 
-These are the first lines to test GitHub sync.

@@ -386,8 +386,8 @@ tab_dates_transition = merge(info_sites, tab_dates_transition, by="id_site")
 
 
 # write.csv(tab_dates_transition, "TransitionDates_per_site__logit.csv", row.names = FALSE)
-write.csv(tab_dates_transition, "/Users/ninonfontaine/Desktop/projetsR/FloraisonAltitude/TransitionDates_per_site__bay0infl.csv", row.names=F) #../../../../../../Desktop/projetsR/FloraisonAltitude/TransitionDates_per_site__bay0infl.csv", row.names = FALSE) 
-# write.csv(tab_dates_transition, "/Users/ninonfontaine/Desktop/projetsR/FloraisonAltitude/TransitionDates_per_site__glmlogit.csv", row.names=F) #../../../../../../Desktop/projetsR/FloraisonAltitude/TransitionDates_per_site__glmlogit.csv", row.names = FALSE)
+write.csv(tab_dates_transition, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/FlodAlti/TransitionDates_per_site__bay0infl.csv", row.names=F) #../../../../../../Desktop/projetsR/FloraisonAltitude/TransitionDates_per_site__bay0infl.csv", row.names = FALSE) 
+# write.csv(tab_dates_transition, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/FlodAlti/TransitionDates_per_site__glmlogit.csv", row.names=F) #../../../../../../Desktop/projetsR/FloraisonAltitude/TransitionDates_per_site__glmlogit.csv", row.names = FALSE)
 
 
 
@@ -436,7 +436,7 @@ write.csv(tab_dates_transition, "/Users/ninonfontaine/Desktop/projetsR/Floraison
 
 # VISUALISATION
 
-tab_dates_transition = read.csv("/Users/ninonfontaine/Desktop/projetsR/FloraisonAltitude/TransitionDates_per_site__bay0infl.csv")
+tab_dates_transition = read.csv("/Users/ninonfontaine/Desktop/projetsR/TEST/output/FlodAlti/TransitionDates_per_site__bay0infl.csv")
 
 
 colors= c("stage 1 to 2"="pink", "stage 2 to 3"="lightblue", "stage 3 to 4"="blue")

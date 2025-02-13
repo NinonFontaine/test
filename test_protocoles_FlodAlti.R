@@ -59,7 +59,42 @@ writeVector(sites_FlodAlti_buff2km, "/Users/ninonfontaine/Desktop/projetsR/TEST/
 # ggmap(map_base) +
 #   geom_polygon(data=geom(project(sites_FlodAlti_buff2km, "epsg:4326")), aes(x=x, y=y, group = part))+
 #   geom_point(data=geom(project(sites_FlodAlti_sp, "epsg:4326")), aes(x=x, y=y), col="red", size=0.5)
-# 
+
+
+
+# Plutôt que de se concentrer sur les points SPOT déjà identifiés, on travaille sur des zones où il y a animation possible :
+# - Massif du Mont Blanc (délimitation existante sur iNaturalist)
+# - Belledonne (délimitation en croisant les limites du massif tel que défini dans les modèles météo SAFRAN, et les lignes de niveau 1000m)
+# - Mont Aiguille (pelouse sommitale - délimitation 'à la main')
+# - Lautaret et alentours (zone LTSER de la ZAA élargie)
+# - coeur du PN Ecrins (délimitation existante sur iNaturalist)
+
+# Récupération de Belledonne dans les massifs SAFRAN :
+massifs_SAFRAN = vect("/Users/ninonfontaine/Desktop/projetsR/TEST/data/_meteo/alp_allslopes/massifs_alpes_2154.shp")
+Belledonne = massifs_SAFRAN[massifs_SAFRAN$nom == "Belledonne"]
+Belledonne_WGS84 = project(Belledonne, "epsg:4326")
+writeVector(Belledonne_WGS84, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/FlodAlti/Belledonne_WGS84.kml")
+
+# Récupération du Mt Aiguille d'après la délimitation manuelle sur mymaps :
+MtAiguille = vect("/Users/ninonfontaine/Desktop/projetsR/TEST/output/FlodAlti/MtAiguille_mymap_WGS84.kml")
+
+# Filtre altitudinal : on évite les plaines avec un filtre à 1000m d'altitude (pour Belledonne)
+MNT_38 = rast("/Volumes/RESSOURCES_SIG/MNT/MNT_Alpes/MNT_FRANCE_25m_L93/Dpt_38_asc.asc")
+MNT_Belledonne = mask(MNT_38, Belledonne)
+MNT_Belledonne_1000m = ifel(MNT_Belledonne >= 1000,1,NA)
+vect_altiBelledonne = as.polygons(MNT_Belledonne_1000m)
+crs(vect_altiBelledonne) = "epsg:2154"
+Belledonne_alti1000_WGS84 = project(vect_altiBelledonne, "epsg:4326")
+
+writeVector(Belledonne_alti1000_WGS84, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/FlodAlti/Belledonne_alti1000_WGS84.kml")
+
+ggmap::register_google(key="AIzaSyA53J3oEn4CEPw1xB7Grb2Ei_-AYYdcXes")
+map_base <- get_map(location = c(lon = 6.5, lat = 45.55), zoom = 8,
+                    maptype = "terrain", scale = 2)
+ggmap(map_base) +
+  geom_polygon(data=geom(Belledonne_alti1000_WGS84), aes(x=x, y=y, group = part), col="red", fill=NA)+
+  geom_polygon(data=geom(MtAiguille), aes(x=x, y=y, group = part), col="red", fill=NA)
+
 
 
 # ----------------------------------------------------------------------------------------*

@@ -3,6 +3,7 @@ library(tidyr)
 library(statip)
 library(terra)
 library(sf)
+library(RJSONIO)
 library(rinat)
 library(leaflet)
 library(ggmap)
@@ -202,14 +203,14 @@ rast_dist_acces1500 = mask(rast_dist_acces, ifel(rast_dist_acces > 1500, NA,1))
 #                   => Blaitière, Péclerey, Loriaz + Servoz
 
 
-#*---- 0.4. Présences de myrtilles (CBNA + iNaturalist) ----
+#*---- 0.4. Présences de myrtilles (CBNA + iNaturalist + relevés landes CREA) ----
 
 # On ne regarde les données que sur la zone d'étude
 zone = project(ext(zone_etude), from="epsg:2154",to="epsg:4326")
 
 # # data_CBNA = read.csv("/Volumes/EN_COURS/2.Recherche/3.Mont_Blanc/LANDE/Data/export_cbna_20231116/export_cbna_crea.csv")
 data_CBNA = read.csv("/Users/ninonfontaine/Desktop/projetsR/TEST/data/_hab_flore/bota/export_cbna_crea.csv")
-data_CBNA = data_CBNA[data_CBNA$cd_nom == 128345,]
+data_CBNA = data_CBNA[data_CBNA$cd_nom %in% c(128345, 128354),]
 
 data_CBNA = data_CBNA[data_CBNA$lon_wgs84 <= zone$xmax & data_CBNA$lon_wgs84 >= zone$xmin &
                         data_CBNA$lat_wgs84 <= zone$ymax & data_CBNA$lat_wgs84 >= zone$ymin,]
@@ -235,35 +236,56 @@ data_CBNA = data_CBNA %>% rename("longitude" = lon_wgs84, "latitude" = lat_wgs84
 # #   => retour Isa : les modèles de distribution myrtille ne marchent pas très bien, ce n'est pas optimal de se baser là-dessus
 
 
-data_iNat = get_inat_obs(taxon_name = "Vaccinium myrtillus",
-                         bounds = c(zone$ymin, zone$xmin, zone$ymax, zone$xmax))
+data_iNat = rbind(get_inat_obs(taxon_name = "Vaccinium myrtillus",
+                         bounds = c(zone$ymin, zone$xmin, zone$ymax, zone$xmax)),
+                  get_inat_obs(taxon_name = "Vaccinium uliginosum",
+                               bounds = c(zone$ymin, zone$xmin, zone$ymax, zone$xmax)))
 data_iNat[,c("x_l93","y_l93")] = crds(project(vect(data_iNat, geom=c("longitude","latitude"), "epsg:4326"),"epsg:2154"))
 
 
+data_landesCREA = RJSONIO::fromJSON("/Users/ninonfontaine/Google Drive/Drive partagés/SoPheno/10. Data/Relevé_végétation/releve_cleaned_301224.json")
+codes_esp = names(data_landesCREA$metadata_global$vegetation)
+data_landesCREA = as.data.frame(do.call("rbind", lapply(data_landesCREA$area, function(x){c(unlist(x$metadata[c("date","ref_project","elevation","latitude","longitude")]), unlist(x$PROTOCOL_PPFG_SUMMARY))})))
+colnames(data_landesCREA) = c("date","ref_project","elevation","latitude","longitude",
+                              codes_esp)
+data_landesCREA$site = rownames(data_landesCREA)
+data_landesCREA[,3:24] = apply(data_landesCREA[,3:24], 2, as.numeric)
+data_landesCREA[,c("x_l93","y_l93")] = crds(project(vect(data_landesCREA, geom=c("longitude","latitude"), "epsg:4326"),"epsg:2154"))
 
-pts_myrtille = rbind(data_iNat[,c("x_l93","y_l93", "longitude", "latitude")],
-                     data_CBNA[,c("x_l93", "y_l93", "longitude", "latitude")])
+
+
+pts_myrtille = rbind(data_iNat[grep("myrtillus",data_iNat$scientific_name),c("x_l93","y_l93", "longitude", "latitude")],
+                     data_CBNA[data_CBNA$cd_nom==128345, c("x_l93", "y_l93", "longitude", "latitude")],
+                     data_landesCREA[data_landesCREA$LVM != 0, c("x_l93", "y_l93", "longitude", "latitude")])
+pts_airelle = rbind(data_iNat[grep("uliginosum",data_iNat$scientific_name),c("x_l93","y_l93", "longitude", "latitude")],
+                     data_CBNA[data_CBNA$cd_nom==128354, c("x_l93", "y_l93", "longitude", "latitude")],
+                     data_landesCREA[data_landesCREA$LVU != 0, c("x_l93", "y_l93", "longitude", "latitude")])
 
 
 #*---- 0.5. Points pré-envisagés, pour l'écoacoustique notamment (ORCHAMP + Colin + CamTrap ?) ----
 pts_envisages = read_xlsx("/Users/ninonfontaine/Library/CloudStorage/GoogleDrive-nfontaine@creamontblanc.org/Drive partagés/SoPheno/Sites_spots.xlsx",
-                          sheet = "Feuil1", col_types = c("text",rep("numeric",3), rep("text",10)))
+                          sheet = "preselection", col_types = c("text",rep("numeric",3), rep("text",10)))
 pts_envisages$selec = paste0("selection initiale",ifelse(!is.na(pts_envisages$Suivi_acoustique)," - ecoacoustique",""))
 pts_envisages = pts_envisages %>% rename("Name"="site")
 
-# On inclut aussi les gradients ORCHAMP 'doubles', où il y a des camtrap et équipements déjà installés (et qui font un doublon de 
-# conditions similaires)
-# ORCHAMP = st_read("/Volumes/EN_COURS/2.Recherche/3.Mont_Blanc/CameraTrap/GPX:KML/camerainfo_running_20221019.kml")
-ORCHAMP = st_read("/Users/ninonfontaine/Desktop/projetsR/TEST/data/_camtrap/camerainfo_running_20221019.kml")
-ORCHAMP[,c("Long","Lat")] = st_coordinates(ORCHAMP)
-ORCHAMP_df = as.data.frame(ORCHAMP)
-ORCHAMP_df$selec = "doublure ORCHAMP"
+
+# On inclut aussi les gradients ORCHAMP 'doubles', où il y a des camtrap et équipements déjà installés (et qui font un doublon de conditions similaires). 
+# Sur ces points ORCHAMP, il y a des CamTrap : on les récupère par ce biais (les noms des CamTrap doublons ont une indication d'orientation).
+
+# # ORCHAMP = st_read("/Volumes/EN_COURS/2.Recherche/3.Mont_Blanc/CameraTrap/GPX:KML/camerainfo_running_20221019.kml")
+# ORCHAMP = st_read("/Users/ninonfontaine/Desktop/projetsR/TEST/data/_camtrap/camerainfo_running_20221019.kml")
+# ORCHAMP[,c("Long","Lat")] = st_coordinates(ORCHAMP)
+# ORCHAMP_df = as.data.frame(ORCHAMP)
+# ORCHAMP_df$selec = "doublure ORCHAMP"
 
 CamTrap = read_ods("/Volumes/EN_COURS/2.Recherche/3.Mont_Blanc/CameraTrap/DATA/camerainfo_20240113.ods", sheet = "Tous")
 CamTrap = CamTrap[!is.na(CamTrap$site) & !grepl("Campagnol", CamTrap$site) & CamTrap$running == "Y",]
 CamTrap = CamTrap %>% rename("Long"="long","Lat"="lat")
-CamTrap$selec = "reseau CamTrap"
 CamTrap = CamTrap %>% rename("Name"="Station")
+CamTrap$selec = "reseau CamTrap"
+CamTrap$selec[CamTrap$site %in% c("Blaitiere","Loriaz","Peclerey")] = "ORCHAMP"
+CamTrap$selec[CamTrap$selec == "ORCHAMP" & grepl("Ouest|Est|Sud|Nord", CamTrap$Name)] = "doublure ORCHAMP"
+CamTrap$selec[CamTrap$site == "Para"] = "doublure ORCHAMP"
 
 # ggmap(map_base_MtBlc) +
 #   # geom_point(data=pts_myrtille, aes(x=lon_wgs84, y=lat_wgs84), col="purple")+
@@ -277,8 +299,8 @@ CamTrap = CamTrap %>% rename("Name"="Station")
 # /!\ il y a des doublons dans les points entre 'pts_envisages' et 'ORCHAMP' ! (ça ne devrait plus apparaître une fois rasterisé)
 
 pts_pot = rbind(pts_envisages[!is.na(pts_envisages$Lat), c("Name","Long","Lat","selec")],
-                CamTrap[!is.na(CamTrap$Lat), c("Name","Long","Lat","selec")],
-                ORCHAMP_df[!is.na(ORCHAMP_df$Lat), c("Name","Long","Lat","selec")])
+                # ORCHAMP_df[!is.na(ORCHAMP_df$Lat), c("Name","Long","Lat","selec")],
+                CamTrap[!is.na(CamTrap$Lat), c("Name","Long","Lat","selec")])
 pts_pot = pts_pot %>% distinct(Long, Lat, .keep_all = T)
 pts_pot = project(vect(pts_pot, geom=c("Long","Lat"), crs="epsg:4326"), "epsg:2154")              
 
@@ -335,136 +357,136 @@ table(values(typo))
 
 #*---- 1.2. Clustering des types de milieux ----
 
-# V1
-# Les habitats sur lesquels on se focalise sont les habitats 2 à 7 
-# (2 Forêt, 3 Limite de la forêt, 4 Prairie subalpine, 5 Lande, 6 Ecotone lande-prairie, 7 Prairie alpine)
-# V2 
-# Au vu des points à myrtille identifiés, les habitats sur lesquels on se focalise sont les habitats 2, 3, 5 et 6
-# (2 Forêt, 3 Limite de la forêt, 5 Lande, 6 Ecotone lande-prairie)
-
-# par(mfrow=c(3,2), mar=c(4,2,4,1))
-# for (i in 2:7){
-#   hist(MNT_MB[hab_ORION == i], main=classes_ORION$NOM[classes_ORION$CODE ==i], xlab="Altitude", xlim=c(minmax(MNT_MB)))
-# }
-
-stackPCA = c(rast_topo, hab_ORION, typo, rast_pts_pot)
-# stackPCA = mask(stackPCA, hab_ORION, maskvalues=2:7, inverse=T) # on ne garde que les habitats d'intérêt
-stackPCA = mask(stackPCA, hab_ORION, maskvalues=c(2,3,5,6), inverse=T) # on ne garde que les habitats d'intérêt
-stackPCA = mask(stackPCA, app(stackPCA, fun = sum)) # on ne garde que les pixels où on a toutes les infos
-stackPCA[[5]] = droplevels(stackPCA[[5]])
-stackPCA[[6]] = droplevels(stackPCA[[6]])
-
-# plot(stackPCA)
-
-
-# Différentes méthodes testées pour le clustering : 
-# 1) ACP 'classique' MAIS on ne peut pas mettre de variables catégorielles comme les habitats !
-
-# # PCA on topography (only on focus habitats)
-# PCA = prcomp(stackPCA[[1:4]], scale. = T)
+# # V1
+# # Les habitats sur lesquels on se focalise sont les habitats 2 à 7 
+# # (2 Forêt, 3 Limite de la forêt, 4 Prairie subalpine, 5 Lande, 6 Ecotone lande-prairie, 7 Prairie alpine)
+# # V2 
+# # Au vu des points à myrtille identifiés, les habitats sur lesquels on se focalise sont les habitats 2, 3, 5 et 6
+# # (2 Forêt, 3 Limite de la forêt, 5 Lande, 6 Ecotone lande-prairie)
 # 
-# # Eigenvalues graph
-# par(mfrow=c(1,1))
-# barplot(summary(PCA)[[6]][2,], main="Proportion of variance")
-# # Arrow graph
-# plot(c(-2,2), c(-2,2), type="n")
-# arrows(x0=0, y0=0, x1=PCA$rotation[,1], y1=PCA$rotation[,2])
-# text(x=PCA$rotation[,1]+0.2, y=PCA$rotation[,2], rownames(PCA$rotation))
-# # points(PCA$x[na.omit(values(stackPCA[[5]]))==4,1:2], cex=0.05)
-# # points(PCA$x[na.omit(values(stackPCA[[5]]))==4,1:2], cex=0.05)
-# points(PCA$x[na.omit(values(stackPCA[[6]]))==1,1:2], cex=0.5, col="red", pch=20) # points envisagés
+# # par(mfrow=c(3,2), mar=c(4,2,4,1))
+# # for (i in 2:7){
+# #   hist(MNT_MB[hab_ORION == i], main=classes_ORION$NOM[classes_ORION$CODE ==i], xlab="Altitude", xlim=c(minmax(MNT_MB)))
+# # }
 # 
-# # Il y a un trou / il manquerait des points à faibles pentes et altitudes => à voir là où ce sont des zones favorables aux myrtilles
+# stackPCA = c(rast_topo, hab_ORION, typo, rast_pts_pot)
+# # stackPCA = mask(stackPCA, hab_ORION, maskvalues=2:7, inverse=T) # on ne garde que les habitats d'intérêt
+# stackPCA = mask(stackPCA, hab_ORION, maskvalues=c(2,3,5,6), inverse=T) # on ne garde que les habitats d'intérêt
+# stackPCA = mask(stackPCA, app(stackPCA, fun = sum)) # on ne garde que les pixels où on a toutes les infos
+# stackPCA[[5]] = droplevels(stackPCA[[5]])
+# stackPCA[[6]] = droplevels(stackPCA[[6]])
 # 
-# # Problème : on n'a pas intégré les différents habitats, puisque l'ACP ne prend pas de variables catégorielles...
-# #       => choix de méthodes mixtes ?
-
-
-# 2) Analyse multivariée mixte + clustering
-
-# # Analyse multivariée ade4
-# AnMult = dudi.mix(na.omit(values(stackPCA[[1:5]])), nf=4)
-# 
-# # Clustering kmeans du package terra
-# # Normalisation des données (sinon l'altitude a beaucoup plus de poids)
-# nx <- minmax(stackPCA[[1:4]])    
-# rn <- (stackPCA[[1:4]] - nx[1,]) / (nx[2,] - nx[1,])
-# stackNorm = c(rn, stackPCA[[5:6]])
-# # Calcul des kmeans /!\ en théorie ça ne marche pas avec des variables catégorielles !! /!\
-# kmeans = k_means(na.omit(values(stackNorm[[1:5]])), centers=6)
-# clusters = stackNorm[[1]]
-# values(clusters)[!is.na(values(clusters))] = kmeans$cluster
-# plot(clusters)
-# 
-# # Matrice de distance puis hclust
-# matdist = daisy(na.omit(values(stackPCA[[1:5]])), metric = "gower")
-# clust = hclust(matdist)
-# # Trop de pixels = trop lourd !
+# # plot(stackPCA)
 # 
 # 
-# # Analyses multivariée de données mixtes (FAMD)
-# tab_FAMD = as.data.frame(na.omit(values(stackPCA[[1:5]])))
-# tab_FAMD$habitat = as.character(tab_FAMD$habitat)
-# famd = FAMD(tab_FAMD, graph=F, ncp=9)
+# # Différentes méthodes testées pour le clustering : 
+# # 1) ACP 'classique' MAIS on ne peut pas mettre de variables catégorielles comme les habitats !
 # 
-# # fviz_famd_var(famd)
-# fviz_eig(famd) # 4 ou 5 dimensions
-# # fviz_famd_ind(famd, habillage=5)
+# # # PCA on topography (only on focus habitats)
+# # PCA = prcomp(stackPCA[[1:4]], scale. = T)
+# # 
+# # # Eigenvalues graph
+# # par(mfrow=c(1,1))
+# # barplot(summary(PCA)[[6]][2,], main="Proportion of variance")
+# # # Arrow graph
+# # plot(c(-2,2), c(-2,2), type="n")
+# # arrows(x0=0, y0=0, x1=PCA$rotation[,1], y1=PCA$rotation[,2])
+# # text(x=PCA$rotation[,1]+0.2, y=PCA$rotation[,2], rownames(PCA$rotation))
+# # # points(PCA$x[na.omit(values(stackPCA[[5]]))==4,1:2], cex=0.05)
+# # # points(PCA$x[na.omit(values(stackPCA[[5]]))==4,1:2], cex=0.05)
+# # points(PCA$x[na.omit(values(stackPCA[[6]]))==1,1:2], cex=0.5, col="red", pch=20) # points envisagés
+# # 
+# # # Il y a un trou / il manquerait des points à faibles pentes et altitudes => à voir là où ce sont des zones favorables aux myrtilles
+# # 
+# # # Problème : on n'a pas intégré les différents habitats, puisque l'ACP ne prend pas de variables catégorielles...
+# # #       => choix de méthodes mixtes ?
 # 
-# clustering = HCPC(famd, graph=F) # TROP LOURD !!!
-
-
-# Utilisation de hclust avec la distance de Gower (fonctionne avec les variables catégorielles)
-h_clust <- function(x, database=as.data.frame(na.omit(values(x))), 
-                    ngroups,  clust_method="complete", #dist_metric="euclidean",
-                    types=list(numeric=1:dim(x)[3]), agfuns=c(mean,mfv1), 
-                    matchfun=gower.dist, ..., #matchfun="squared"
-                    maxcell=10000, filename="", overwrite=FALSE, wopt=list()) {
-  stopifnot(maxcell > 0)
-  stopifnot(ngroups > 0)
-  stopifnot(ngroups < maxcell)
-  d <- na.omit(spatSample(x, maxcell, "regular"))
-  # print(dim(d))
-  # dd <- stats::dist(d, dist_metric) # adaptation par rapport au script initial
-  # hc <- stats::hclust(dd, clust_method) # adaptation par rapport au script initial
-  dd <- StatMatch::gower.dist(d) # adaptation par rapport au script initial
-  hc <- stats::hclust(as.dist(dd), clust_method) # adaptation par rapport au script initial
-  th <- sort(hc$height, TRUE)[ngroups]
-  cls <- stats::cutree(hc, h = th)
-  hc <- cut(stats::as.dendrogram(hc), h=th)$upper
-  # d <- aggregate(d, list(cls=cls), agfun)
-  d <- merge(as.data.frame(aggregate(d[,types[["numeric"]]], list(cls=cls), agfuns[[1]])),
-             as.data.frame(aggregate(d[,types[["factor"]]], list(cls=cls), agfuns[[2]])), by="cls")# adaptation par rapport au script initial
-  # print(d)
-  cls <- d$cls 
-  d$cls <- NULL
-  colnames(d)=names(x)
-  # b <- bestMatch(x, d, fun=matchfun, ..., filename=filename, overwrite=overwrite, wopt=wopt)	
-  # print(head(d))
-  bdist = gower.dist(database,d)
-  b=apply(bdist,1,FUN = function(X){c(1:ncol(bdist))[X==min(X)]})
-  brast=x[[1]]
-  brast[!is.na(values(brast))]=b
-  # b <- bestMatch(x, d, fun=matchfun, ..., filename=filename, overwrite=overwrite, wopt=wopt)
-  return(list(barycentres=d,  dendrogram=hc, clusterrast=brast))
-} # https://rdrr.io/github/rspatial/terra/src/R/k_means.R 
-
-database = as.data.frame(na.omit(values(stackPCA)))
-database$habitat = droplevels(factor(database$habitat, levels=classes_ORION$CODE, labels=classes_ORION$NOM))
-
-clustering = h_clust(stackPCA[[c(1,2,4,5,6)]], database = database[c(1,2,4,5,6)],
-                     ngroups=8, types=list(numeric=1:4, factor=5), maxcell=50000) 
-# clustering = h_clust(stackPCA[[1:5]], database = database,
-#                      ngroups=6, types=list(numeric=1:4, factor=5), maxcell=50000) 
-
-clust_rast = clustering$clusterrast
-terra::plot(clust_rast)
-
-database$clust8 = na.omit(values(clust_rast))
-
-# Au final le clustering ressemble aux différents habitats, MAIS 
-# - l'habitat "forêt" est subdivisé en limite de la forêt (cluster 5)  VS   forêt en fonction de l'exposition (4 expositions - clusters 1 6 7 8)
-# - l'habitat "lande" est subdivisé en écotone lande-prairie (un peu plus haut en altitude - cluster 2)  VS  lande NW (cluster 3)   VS   lande SE (4)
+# 
+# # 2) Analyse multivariée mixte + clustering
+# 
+# # # Analyse multivariée ade4
+# # AnMult = dudi.mix(na.omit(values(stackPCA[[1:5]])), nf=4)
+# # 
+# # # Clustering kmeans du package terra
+# # # Normalisation des données (sinon l'altitude a beaucoup plus de poids)
+# # nx <- minmax(stackPCA[[1:4]])    
+# # rn <- (stackPCA[[1:4]] - nx[1,]) / (nx[2,] - nx[1,])
+# # stackNorm = c(rn, stackPCA[[5:6]])
+# # # Calcul des kmeans /!\ en théorie ça ne marche pas avec des variables catégorielles !! /!\
+# # kmeans = k_means(na.omit(values(stackNorm[[1:5]])), centers=6)
+# # clusters = stackNorm[[1]]
+# # values(clusters)[!is.na(values(clusters))] = kmeans$cluster
+# # plot(clusters)
+# # 
+# # # Matrice de distance puis hclust
+# # matdist = daisy(na.omit(values(stackPCA[[1:5]])), metric = "gower")
+# # clust = hclust(matdist)
+# # # Trop de pixels = trop lourd !
+# # 
+# # 
+# # # Analyses multivariée de données mixtes (FAMD)
+# # tab_FAMD = as.data.frame(na.omit(values(stackPCA[[1:5]])))
+# # tab_FAMD$habitat = as.character(tab_FAMD$habitat)
+# # famd = FAMD(tab_FAMD, graph=F, ncp=9)
+# # 
+# # # fviz_famd_var(famd)
+# # fviz_eig(famd) # 4 ou 5 dimensions
+# # # fviz_famd_ind(famd, habillage=5)
+# # 
+# # clustering = HCPC(famd, graph=F) # TROP LOURD !!!
+# 
+# 
+# # Utilisation de hclust avec la distance de Gower (fonctionne avec les variables catégorielles)
+# h_clust <- function(x, database=as.data.frame(na.omit(values(x))), 
+#                     ngroups,  clust_method="complete", #dist_metric="euclidean",
+#                     types=list(numeric=1:dim(x)[3]), agfuns=c(mean,mfv1), 
+#                     matchfun=gower.dist, ..., #matchfun="squared"
+#                     maxcell=10000, filename="", overwrite=FALSE, wopt=list()) {
+#   stopifnot(maxcell > 0)
+#   stopifnot(ngroups > 0)
+#   stopifnot(ngroups < maxcell)
+#   d <- na.omit(spatSample(x, maxcell, "regular"))
+#   # print(dim(d))
+#   # dd <- stats::dist(d, dist_metric) # adaptation par rapport au script initial
+#   # hc <- stats::hclust(dd, clust_method) # adaptation par rapport au script initial
+#   dd <- StatMatch::gower.dist(d) # adaptation par rapport au script initial
+#   hc <- stats::hclust(as.dist(dd), clust_method) # adaptation par rapport au script initial
+#   th <- sort(hc$height, TRUE)[ngroups]
+#   cls <- stats::cutree(hc, h = th)
+#   hc <- cut(stats::as.dendrogram(hc), h=th)$upper
+#   # d <- aggregate(d, list(cls=cls), agfun)
+#   d <- merge(as.data.frame(aggregate(d[,types[["numeric"]]], list(cls=cls), agfuns[[1]])),
+#              as.data.frame(aggregate(d[,types[["factor"]]], list(cls=cls), agfuns[[2]])), by="cls")# adaptation par rapport au script initial
+#   # print(d)
+#   cls <- d$cls 
+#   d$cls <- NULL
+#   colnames(d)=names(x)
+#   # b <- bestMatch(x, d, fun=matchfun, ..., filename=filename, overwrite=overwrite, wopt=wopt)	
+#   # print(head(d))
+#   bdist = gower.dist(database,d)
+#   b=apply(bdist,1,FUN = function(X){c(1:ncol(bdist))[X==min(X)]})
+#   brast=x[[1]]
+#   brast[!is.na(values(brast))]=b
+#   # b <- bestMatch(x, d, fun=matchfun, ..., filename=filename, overwrite=overwrite, wopt=wopt)
+#   return(list(barycentres=d,  dendrogram=hc, clusterrast=brast))
+# } # https://rdrr.io/github/rspatial/terra/src/R/k_means.R 
+# 
+# database = as.data.frame(na.omit(values(stackPCA)))
+# database$habitat = droplevels(factor(database$habitat, levels=classes_ORION$CODE, labels=classes_ORION$NOM))
+# 
+# clustering = h_clust(stackPCA[[c(1,2,4,5,6)]], database = database[c(1,2,4,5,6)],
+#                      ngroups=8, types=list(numeric=1:4, factor=5), maxcell=50000) 
+# # clustering = h_clust(stackPCA[[1:5]], database = database,
+# #                      ngroups=6, types=list(numeric=1:4, factor=5), maxcell=50000) 
+# 
+# clust_rast = clustering$clusterrast
+# terra::plot(clust_rast)
+# 
+# database$clust8 = na.omit(values(clust_rast))
+# 
+# # Au final le clustering ressemble aux différents habitats, MAIS 
+# # - l'habitat "forêt" est subdivisé en limite de la forêt (cluster 5)  VS   forêt en fonction de l'exposition (4 expositions - clusters 1 6 7 8)
+# # - l'habitat "lande" est subdivisé en écotone lande-prairie (un peu plus haut en altitude - cluster 2)  VS  lande NW (cluster 3)   VS   lande SE (4)
 
 
 
@@ -522,6 +544,8 @@ points(pts_myrtille$x_l93, pts_myrtille$y_l93, cex=0.5, pch=16,col="black")
 typo_sel_leaflet = project(typo_sel, "epsg:4326", method="near")
 pts_pot_cond[,c("longitude","latitude")] = crds(project(vect(pts_pot_cond, geom=c("x","y"), "epsg:2154"),"epsg:4326"))
 
+
+
 carto = leaflet() %>% #addCircleMarkers(color = ~c("white","purple")[points_couchades_potentiels_proj$pasto_couchades +1]) %>% 
   addTiles() %>% #'http://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}')%>% 
   addRasterImage(typo_sel_leaflet, colors="Paired", opacity=0.7) %>%
@@ -539,12 +563,12 @@ carto
 
 #* 3. Échantillonnage aléatoire de points supplémentaires où faire du suivi de production de fruits ----
 
-# Pour optimiser la logistique terrain, on se limite à quelques zones où il y a de la myrtille d'après les relevés CBNA ou les pointages iNaturalist
-# ou d'autres sources d'information (ex. CamTrap, AltitudeRando !).
-zone_myrtille = aggregate(buffer(vect(pts_myrtille, geom=c("x_l93","y_l93"), "epsg:2154"), 500))
-rast_myrtille = rasterize(zone_myrtille, typo)
-# plot(mask(typo, rast_myrtille), col=palette("Paired"))
-# /!\ BIFBOF, très peu de points quand même ! Se baser plutôt sur des zones préidentifiées ?
+# # Pour optimiser la logistique terrain, on se limite à quelques zones où il y a de la myrtille d'après les relevés CBNA ou les pointages iNaturalist
+# # ou d'autres sources d'information (ex. CamTrap, AltitudeRando !).
+# zone_myrtille = aggregate(buffer(vect(pts_myrtille, geom=c("x_l93","y_l93"), "epsg:2154"), 500))
+# rast_myrtille = rasterize(zone_myrtille, typo)
+# # plot(mask(typo, rast_myrtille), col=palette("Paired"))
+# # /!\ BIFBOF, très peu de points quand même ! Se baser plutôt sur des zones préidentifiées ?
 
 # L'idée est de parcourir des gradients altitudinaux pour faire à la fois des sites en forêt et en lande.
 # Les zones pré-identifiées d'après la présence avérée de myrtille ET pour prendre en compte les différentes situations habitat x exposition sont :
@@ -562,10 +586,16 @@ rast_myrtille = rasterize(zone_myrtille, typo)
 # - À DISCUTER en plus, si on veut aussi avoir des sites du côté de l'autre Comcom : on peut viser la zone au-dessus de Combloux, vers le Planay ?
 
 zones_preid = vect("/Users/ninonfontaine/Desktop/projetsR/TEST/data/FlodAlti/zonesMyrtillePreSelec_mymaps.kml")
+
+# ggmap(map_base_MtBlc) +
+#   geom_polygon(data=geom(zones_preid), aes(x=x, y=y, group=geom)) + 
+#   geom_point(data=pts_myrtille, aes(x=longitude, y=latitude), col="darkviolet")
+
 zones_preid = project(zones_preid, "epsg:2154")
 rast_preid = rasterize(zones_preid, typo)
 # plot(typo_sel, col=palette("Paired"))
 # lines(zones_preid, col="black")
+
 
 # On se concentre aussi sur les zones pas trop éloignées des chemins (200 m max ?).
 typo_preid = mask(typo_sel, mask(rast_preid, ifel(rast_dist_acces<200,1,NA)))
@@ -588,10 +618,13 @@ for (type in levels(typo_preid)[[1]]$ID){
 dist = distance(vect(ech, geom=c("x","y"), "epsg:2154"), 
                 vect(pts_pot_cond, geom=c("x","y"), "epsg:2154"))
 distproxim = 200
-ech$proxim = unlist(apply(dist, 1, function(x){prox = pts_pot_cond[x<distproxim,c("Name","typo")]
+ech$proxim = unlist(apply(dist, 1, function(x){prox = pts_pot_cond[x<distproxim,c("Name","typo_Hab_x_Asp")]
 return(ifelse(nrow(prox)==0,NA,
               paste0(prox[,1]," (type ", prox[,2],") à ",round(x[x<distproxim],0)," m")))}))
 
+dist_airelle = distance(vect(ech, geom=c("x","y"), "epsg:2154"), 
+                        vect(pts_airelle, geom=c("x_l93","y_l93"), "epsg:2154"))
+ech$airelle_proxim = apply(dist_airelle,1, min)
 
 ech$zone = extract(zones_preid, ech[,c("x","y")])$Name
 ech[,c("longitude","latitude")] = crds(project(vect(ech, geom=c("x","y"), "epsg:2154"),"epsg:4326"))
@@ -599,15 +632,24 @@ ech$altitude = extract(MNT_MB, ech[,c("x","y")])$MB_MNT_25m
 ech$pente = extract(slope_MB, ech[,c("x","y")])$slope
 
 
+write.csv(ech, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/FlodAlti/PlEchantillonnage_FruitsMyrt.csv" ,row.names = F)  
+
+
+
+# Visualisation de la sélection
+
+ech = read.csv("/Users/ninonfontaine/Desktop/projetsR/TEST/output/FlodAlti/PlEchantillonnage_FruitsMyrt.csv")  
+
 carto_ech = leaflet() %>%
   addTiles() %>% #'http://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}')%>% 
   addRasterImage(typo_sel_leaflet, colors="Paired", opacity=0.7) %>%
   addCircleMarkers(lng=pts_myrtille$longitude, lat=pts_myrtille$latitude, col="darkviolet", radius=0.5, opacity=1)%>%
+  addCircleMarkers(lng=pts_airelle$longitude, lat=pts_airelle$latitude, col="darkblue", radius=0.5, opacity=1)%>%
   addCircleMarkers(lng=pts_pot_cond$longitude, lat=pts_pot_cond$latitude, 
                    popup = paste(pts_pot_cond$Name,"- Typo :", pts_pot_cond$typo),
                    fillColor =as.character(factor(pts_pot_cond$selec,
-                                                  levels=c("selection initiale - ecoacoustique","selection initiale","doublure ORCHAMP","reseau CamTrap"),
-                                                  labels=c("darkgreen","yellowgreen","lightgray","darkgrey"))), 
+                                                  levels=c("selection initiale - ecoacoustique","selection initiale","ORCHAMP","doublure ORCHAMP","reseau CamTrap"),
+                                                  labels=c("darkgreen","yellowgreen","yellowgreen","darkgrey","lightgray"))), 
                    radius=ifelse(pts_pot_cond$selec=="selection initiale - ecoacoustique",8,4), 
                    color="black",opacity=1,fillOpacity = 1, weight=1)%>%
   addCircleMarkers(lng=ech$longitude, lat=ech$latitude, 
@@ -620,6 +662,30 @@ carto_ech = leaflet() %>%
 carto_ech
   
   
-write.csv(ech, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/FlodAlti/PlEchantillonnage_FruitsMyrt.csv" ,row.names = F)  
+
+# Concaténation sélection + points acoustique + ORCHAMP
+
+ech$selec = "selection aleatoire"
+ech = ech  %>%
+  group_by(typo_Hab_x_Asp) %>%
+  mutate(Name = paste(typo_Hab_x_Asp, 1:length(typo_Hab_x_Asp), sep="_") )
+ech$typo_Hab_x_Asp = as.factor(ech$typo_Hab_x_Asp)
+
+pts_pot_cond$zone = extract(zones_preid, pts_pot_cond[,c("x","y")])$Name
+pts_pot_cond$proxim = NA
+
+dist_airelle = distance(vect(pts_pot_cond, geom=c("x","y"), "epsg:2154"), 
+                        vect(pts_airelle, geom=c("x_l93","y_l93"), "epsg:2154"))
+pts_pot_cond$airelle_proxim = apply(dist_airelle,1, min)
+
+pts_pot_cond = pts_pot_cond %>% rename("pente" = slope, "typo_Hab_x_Asp" = typo)
+
+recap_sites = rbind(ech,
+                    pts_pot_cond[,colnames(ech)])
 
 
+write.csv(recap_sites, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/FlodAlti/PlEchantillonnage_FruitsMyrt_RECAPtotal.csv" ,row.names = F)  
+
+
+
+table(recap_sites$zone, recap_sites$selec, recap_sites$typo_Hab_x_Asp)

@@ -53,30 +53,53 @@ ggplot(resume_parQ, aes(x=visit_date)) + facet_wrap(. ~ id_site) +
 # /!\ QUESTION : moyenne des proportions ou moyenne totale ? 
 #     Sommer les comptages de tous les quadrats me semble plus juste, puisqu'on réfléchit à la phéno du site
 #     (si on voulait la moyenne des proportions : across(starts_with("prop_stage"), ~ mean(.x), .names = "{.col}") )
-resume <- data_parQ %>% group_by(id_site, visit_date) %>%
-  summarise(counts = sum(counts),
+resume <- data_parQ[data_parQ$counts != 0,] %>% group_by(id_site, visit_date) %>%
+  summarise(tot_counts = sum(counts),
+            sd_counts = sd(counts, na.rm=T),
+            across(starts_with("prop_stage"), ~ sd(.x, na.rm=T), .names = "sd_{.col}"),
             across(starts_with("stage"), ~ sum(.x, na.rm=T), .names = "{.col}"))
-resume <- resume %>% mutate(across(starts_with("stage"), ~ .x/counts, .names = "prop_{.col}"))
+resume <- resume %>% mutate(across(starts_with("stage"), ~ .x/tot_counts, .names = "prop_{.col}"))
 
 resume$date_no <- yday(resume$visit_date)
 
 
+# Visualisation des données de phéno sur les différents sites
+
 colors= c("stage1"="green", "stage2"="pink", "stage3"="lightblue", "stage4"="blue")
 ggplot(na.omit(resume), aes(x=date_no)) + facet_wrap(. ~ id_site) + 
   geom_point(aes(y=prop_stage1, col="stage1"))+ 
+  geom_errorbar(aes(ymin=prop_stage1 - sd_prop_stage1, ymax=prop_stage1 + sd_prop_stage1, col="stage1"))+
   geom_line(aes(y=prop_stage1, col="stage1"))+ 
   geom_point(aes(y=prop_stage2, col="stage2"))+ 
+  geom_errorbar(aes(ymin=prop_stage2 - sd_prop_stage2, ymax=prop_stage2 + sd_prop_stage2, col="stage2"))+
   geom_line(aes(y=prop_stage2, col="stage2"))+ 
   geom_point(aes(y=prop_stage3, col="stage3"))+ 
+  geom_errorbar(aes(ymin=prop_stage3 - sd_prop_stage3, ymax=prop_stage3 + sd_prop_stage3, col="stage3"))+
   geom_line(aes(y=prop_stage3, col="stage3"))+ 
   geom_point(aes(y=prop_stage4, col="stage4"))+ 
+  geom_errorbar(aes(ymin=prop_stage4 - sd_prop_stage4, ymax=prop_stage4 + sd_prop_stage4, col="stage4"))+
   geom_line(aes(y=prop_stage4, col="stage4"))+
   labs(y="Proportion of counts per stage", x="Date", col="")+
   scale_color_manual(values=colors)
 
+# --------------------------------------------------------------------------*
+# Aperçu de la variabilité de production de fruits intersites et intrasites 
+# (pour réfléchir au nombre de Q et nombre de sites pour la caractérisation
+# de la fructification en fonction des conditions environnementales)
+#
+# --> on se concentre sur la fin de la fructification, quand il n'y a plus que des fruits mûrs (stage 4)
+data_estimvarfruit = data_parQ[data_parQ$counts != 0 & data_parQ$stage4 == data_parQ$counts & !is.na(data_parQ$stage4),]
 
+var_inter = var(data_estimvarfruit$stage4) 
+testvar = data_estimvarfruit %>% group_by(id_site, visit_date) %>% summarise(
+  var_intra = var(stage4),
+  moy = mean(stage4)
+)
+var_inter2 = var(testvar$moy)
 
+# => var_inter >> var_intra : mieux vaut se concentrer sur un plus grand nombre de sites avec un plus petit nombre de quadrats par site
 
+# --------------------------------------------------------------------------*
 
 # # --------------------------------------------------------------------------------------*
 # # TESTS DIVERS POUR FITTER DES COURBES PHENO 

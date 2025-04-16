@@ -1,3 +1,8 @@
+#########################################################################################*
+# Projet Floraison d'Altitude : premières explorations ----
+#########################################################################################*
+
+
 library(ggmap)
 library(ggplot2)
 library(tidyr)
@@ -8,12 +13,17 @@ library(brms)
 # library(tidybayes)
 # library(ciTools)
 
-# ----------------------------------------------------------------------------------------*
-# MISE EN FORME DES DONNEES 
-# (rebasculé dans le script 1_mise_en_forme_BDD.R)
-# ----------------------------------------------------------------------------------------*
+library(rinat)
 
-data_long <- read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/prototool/FloraisonAltitude/data_long.csv")
+
+#########################################################################################*
+# MISE EN FORME DES DONNEES ----
+#########################################################################################*
+
+# (rebasculé dans le script 1_mise_en_forme_BDD.R)
+
+
+data_long <- read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/05. RECHERCHE/06. ANALYSES/FloraisonAltitude/data_long.csv")
 
 # Aperçu de la localisation des points
 cle_ggmap ="" # à récupérer
@@ -51,7 +61,7 @@ ggplot(resume_parQ, aes(x=visit_date)) + facet_wrap(. ~ id_site) +
 
 # Résumé par site (= moyennes entre les quadrats)
 # /!\ QUESTION : moyenne des proportions ou moyenne totale ? 
-#     Sommer les comptages de tous les quadrats me semble plus juste, puisqu'on réfléchit à la phéno du site
+#     Sommer les comptages de tous les quadrats me semble plus juste, puisqu'on réfléchit à la phéno du site --> moyenne totale
 #     (si on voulait la moyenne des proportions : across(starts_with("prop_stage"), ~ mean(.x), .names = "{.col}") )
 resume <- data_parQ[data_parQ$counts != 0,] %>% group_by(id_site, visit_date) %>%
   summarise(tot_counts = sum(counts),
@@ -62,8 +72,11 @@ resume <- resume %>% mutate(across(starts_with("stage"), ~ .x/tot_counts, .names
 
 resume$date_no <- yday(resume$visit_date)
 
+#########################################################################################*
+# VISUALISATION DES DONNEES BRUTES ----
+#########################################################################################*
 
-# Visualisation des données de phéno sur les différents sites
+# Aperçu des données phéno sur les différents sites
 
 colors= c("stage1"="green", "stage2"="pink", "stage3"="lightblue", "stage4"="blue")
 ggplot(na.omit(resume), aes(x=date_no)) + facet_wrap(. ~ id_site) + 
@@ -82,7 +95,10 @@ ggplot(na.omit(resume), aes(x=date_no)) + facet_wrap(. ~ id_site) +
   labs(y="Proportion of counts per stage", x="Date", col="")+
   scale_color_manual(values=colors)
 
-# --------------------------------------------------------------------------*
+#########################################################################################*
+# EXPLORATIONS ----
+#########################################################################################*
+
 # Aperçu de la variabilité de production de fruits intersites et intrasites 
 # (pour réfléchir au nombre de Q et nombre de sites pour la caractérisation
 # de la fructification en fonction des conditions environnementales)
@@ -101,10 +117,11 @@ var_inter2 = var(testvar$moy)
 
 # --------------------------------------------------------------------------*
 
-# # --------------------------------------------------------------------------------------*
-# # TESTS DIVERS POUR FITTER DES COURBES PHENO 
-# # --------------------------------------------------------------------------------------*
-#
+#########################################################################################*
+# TESTS DIVERS POUR FITTER DES COURBES PHENO AVEC LES DONNEES FLO D'ALTI ----
+#########################################################################################*
+
+
 # # --------------------------------------------------------------------------------------*
 # # Tests pour avoir les phenophases, en utilisant les fonctions de base du package **phenor**
 # # if(!require(remotes)){install.packages("remotes")}
@@ -162,8 +179,9 @@ colnames(datatest) = c("date_no","stage","prop_stage","counts")
 # du zero-one-inflated beta (soit en bayésien : brm(family = zero_one_inflated_beta()))
 # https://strengejacke.github.io/regressionmodels/
 
-
-# QUELQUES TESTS avec différentes fonctions de smoothing
+#########################################################################################*
+#*---- Quelques tests avec différentes fonctions de smoothing ----
+# --------------------------------------------------------------------------------------*
 # - avec glm (fonction logit)
 sigmfit_logit <- glm(data = datatest,
                          prop_stage~date_no, family="binomial")
@@ -268,8 +286,8 @@ for (i in 1:length(seuils)){rect(0, -1, dates_bay01infl[i], seuils[i], lty = 2, 
 # => cela suggère de garder le smoothing en logit
 
 
-# ----------------------------------------------------------------------------------------*
-# GENERALISATION DU FITTING DES COURBES PHENO POUR TOUS LES SITES ET TOUTES LES TRANSITIONS
+#########################################################################################*
+#*---- Généralisation du fitting des courbes phéno pour tous les sites et toutes les transitions ----
 # (rebasculé dans le script 2_identification_dates_transition.R)
 # ----------------------------------------------------------------------------------------*
 
@@ -421,8 +439,8 @@ write.csv(tab_dates_transition, "/Users/ninonfontaine/Desktop/projetsR/TEST/outp
 #        paired = T)#, alternative = "less")
 
 
-# --------------------------------------------------------------------------------------*
-#   Notes - to improve
+#########################################################################################*
+#*----   Notes - to improve ----
 # --------------------------------------------------------------------------------------*
 
 # - Je n'ai fait que du smoothing basé sur les transitions "rising". En théorie quand on change de stade on peut avoir 
@@ -456,8 +474,10 @@ write.csv(tab_dates_transition, "/Users/ninonfontaine/Desktop/projetsR/TEST/outp
 
 
 
+#########################################################################################*
+# VISUALISATION DES TENDANCES PHENO ----
+#########################################################################################*
 
-# VISUALISATION
 
 tab_dates_transition = read.csv("/Users/ninonfontaine/Desktop/projetsR/TEST/output/FlodAlti/TransitionDates_per_site__bay0infl.csv")
 
@@ -476,11 +496,64 @@ ggplot(tab_dates_transition, aes(x=altitude, label=id_site)) +
   geom_smooth(method="lm", aes(y=trD_st2to3_10pourc_Est, x=altitude, colour = "stage 2 to 3"), se=F)
 
 
+#########################################################################################*
+#*---- Lien entre altitude et phénologie ----
+# --------------------------------------------------------------------------------------*
 
-# LIEN ENTRE ALTITUDE ET PHENOLOGIE
 # (pour pouvoir caler les dates d'observation sur SPOT)
 modFruc50 = lm(data=tab_dates_transition[tab_dates_transition$nom_cite == "Vaccinium myrtillus L., 1753",],
                formula= trD_st3to4_50pourc_Est ~ altitude)
 # => 6 jours de décalage par 100m d'altitude pour 50% de fruits mûrs (R2 adjusted = 0.94, pval=0.020)
 # => 5 jours de décalage par 100m d'altitude pour 10% de fruits mûrs (mais R2 beaucoup moins bon : R2 adjusted = 0.48 et pval>0.05)
+
+# (pas assez de données pour la floraison !! (= passage du stade 1 au stade 2))
+# modFlow50 = lm(data=tab_dates_transition[tab_dates_transition$nom_cite == "Vaccinium myrtillus L., 1753",],
+#                formula= trD_st1to2_50pourc_Est ~ altitude)
+
+
+
+
+#########################################################################################*
+# EXPLORATIONS BASÉES SUR LES DONNÉES PHÉNO EXISTANTES DANS iNATURALIST ----
+#########################################################################################*
+
+iNat_myrt = rbind(cbind(get_inat_obs(taxon_name = "Vaccinium myrtillus", annotation = c(12, 13), bounds = c(43.6, 4.8, 46.6, 8.2)), data.frame("PHENO" = "Flowering")),
+                  cbind(get_inat_obs(taxon_name = "Vaccinium myrtillus", annotation = c(12, 14), bounds = c(43.6, 4.8, 46.6, 8.2)), data.frame("PHENO" = "Fruiting")),
+                  cbind(get_inat_obs(taxon_name = "Vaccinium myrtillus", annotation = c(12, 15), bounds = c(43.6, 4.8, 46.6, 8.2)), data.frame("PHENO" = "Flower budding")),
+                  cbind(get_inat_obs(taxon_name = "Vaccinium myrtillus", annotation = c(12, 21), bounds = c(43.6, 4.8, 46.6, 8.2)), data.frame("PHENO" = "No Evidence of Flowering")))
+iNat_myrt$observed_on = as.Date(iNat_myrt$observed_on, format="%Y-%m-%d")
+iNat_myrt$JULDAY = yday(iNat_myrt$observed_on)
+  
+# Localisation des observations (dans l'extraction, on s'est restreint aux Alpes occidentales)
+map_base <- get_map(location = c(lon = 6.5, lat = 45.55), zoom = 7,
+                    maptype = "terrain", scale = 2)
+ggmap(map_base) +
+  geom_point(data=iNat_myrt, aes(x=longitude, y=latitude))
+
+# Aperçu des observations, par stade phénologique
+ggplot(iNat_myrt, aes(x=JULDAY)) + geom_histogram() 
+ggplot(iNat_myrt, aes(x=JULDAY, y=PHENO)) + geom_violin() + geom_point()
+
+# Lien avec l'altitude au niveau des points observés
+DEM_Europe = rast("/Users/ninonfontaine/Google Drive/Drive partagés/05. RECHERCHE/05. DONNEES/Topographie/MNT/DEM_COP89_EU_W_100m.tif")
+iNat_myrt$ALTITUDE = extract(DEM_Europe, project(vect(iNat_myrt, geom=c("longitude", "latitude"), "epsg:4326"), crs(DEM_Europe)))[,2]
+write.csv(iNat_myrt, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/FlodAlti/apercu_dataiNat_pheno.csv", row.names = F)
+
+ggplot(iNat_myrt[iNat_myrt$PHENO %in% c("Flowering","Fruiting"), ], 
+       aes(x=JULDAY, y=factor(ifelse(ALTITUDE < 1500, "< 1500 m", ifelse(ALTITUDE < 2000, "1500 - 2000 m", "> 2000 m")),
+                              levels = c("> 2000 m","1500 - 2000 m", "< 1500 m")))) + 
+  geom_violin() + geom_point() + facet_wrap(PHENO~., nrow=2) + labs(x="Day of year",y="")
+# ggplot(iNat_myrt, aes(x=ALTITUDE, y=JULDAY, colour = PHENO)) + geom_point() + geom_smooth(method="lm")
+
+
+modFruc_iNat = lm(data=iNat_myrt[iNat_myrt$PHENO == "Fruiting",],
+               formula= JULDAY ~ ALTITUDE)
+modFlow_iNat = lm(data=iNat_myrt[iNat_myrt$PHENO == "Flowering",],
+                  formula= JULDAY ~ ALTITUDE)
+# le modèle de flowering en fonction de l'altitude marche plutôt bien (R2 ajusté = 0.646 - 3 jours de retard par 100m d'altitude), mais celui de 
+# fructification moins (R2 ajusté = 0.050 - 2 jours de retard par 100m d'altitude)
+# HYPOTHÈSES : 
+# - c'est un stade qui dure plus longtemps, donc les observations sont plus disparates en terme de dates (on ne distingue pas le 10-20-50 % de 
+#   fruits mûrs, et donc un certain moment de cette phénophase)
+# - d'autres paramètres que l'altitude entrent en compte, par exemple l'effet sécheresse ?
 

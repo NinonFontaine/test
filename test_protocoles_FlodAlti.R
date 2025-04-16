@@ -265,6 +265,7 @@ pts_airelle = rbind(data_iNat[grep("uliginosum",data_iNat$scientific_name),c("x_
 #*---- 0.5. Points pré-envisagés, pour l'écoacoustique notamment (ORCHAMP + Colin + CamTrap ?) ----
 pts_envisages = read_xlsx("/Users/ninonfontaine/Library/CloudStorage/GoogleDrive-nfontaine@creamontblanc.org/Drive partagés/SoPheno/Sites_spots.xlsx",
                           sheet = "preselection", col_types = c("text",rep("numeric",3), rep("text",10)))
+pts_envisages = pts_envisages[!is.na(pts_envisages$Lat),]
 pts_envisages$selec = paste0("selection initiale",ifelse(!is.na(pts_envisages$Suivi_acoustique)," - ecoacoustique",""))
 pts_envisages = pts_envisages %>% rename("Name"="site")
 
@@ -689,3 +690,11 @@ write.csv(recap_sites, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/FlodAl
 
 
 table(recap_sites$zone, recap_sites$selec, recap_sites$typo_Hab_x_Asp)
+
+# carto_acoustique = leaflet(recap_sites[recap_sites$selec == "selection initiale - ecoacoustique",]) %>%
+#   addTiles() %>% #'http://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}')%>% 
+#   addCircleMarkers(lng=recap_sites[recap_sites$selec == "selection initiale - ecoacoustique","longitude"], lat=recap_sites[recap_sites$selec == "selection initiale - ecoacoustique","latitude"], 
+#                    fillColor ="darkgreen", 
+#                    radius=8, 
+#                    color="black",opacity=1,fillOpacity = 1, weight=1)
+# carto_acoustique

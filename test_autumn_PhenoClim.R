@@ -12,6 +12,7 @@ library(data.table)
 library(reshape2)
 library(dplyr)
 library(terra)
+library(raster)
 library(lme4)
 library(lmerTest) # permet d'avoir les pvalues qui s'affichent pour les lmer
 library(visreg)
@@ -20,6 +21,7 @@ library(variancePartition) # fonction calcVarPart
 library(brms)
 library(sjPlot)
 library(meteor) # pour le calcul de la photopériode
+library(leaflet)
 
 
 ##############################################-
@@ -61,7 +63,7 @@ library(meteor) # pour le calcul de la photopériode
 ##############################################-
 
 # phenoclim = read.csv("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/Phenoclim_data_cleaned.csv") 
-phenoclim = read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/prototool/Phenoclim/data/_CLEANED_data_pheno.csv")
+phenoclim = read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/05. RECHERCHE/06. ANALYSES/Phenoclim/data/_CLEANED_data_pheno.csv")
 # Données obtenues avec le script 1_mise_en_forme_BDD.R
 
 
@@ -83,7 +85,7 @@ phenoclim = read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/prototo
 # # TESTS SUR LE MÉLÈZE
 # pheno_aut10_meleze = pheno_aut10[pheno_aut10$species == "Meleze",]
 # model_meleze <- brm(. # /!\ bayésien fait bien chauffer l'ordi ! Privilégier d'autres méthodes comme pour le débourrement ?
-#   bf(julian_day ~ altitude+yearQ+(yearQ|nom_zone)),
+#   bf(julian_day ~ altitude+yearQ+(yearQ|ID_zone)),
 #   data = pheno_aut10_meleze,
 #   init = "0",
 #   chains = 4, iter = 5000, warmup = 1000,
@@ -109,7 +111,7 @@ phenoclim = read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/prototo
 ######################################################################################################-
 
 # DATA 
-resume_automne = read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/prototool/Phenoclim/Analyse/Indice_phenoclim/pheno_year_global.csv")
+resume_automne = read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/05. RECHERCHE/06. ANALYSES/Phenoclim/Analyse/Indice_phenoclim/pheno_year_global.csv")
 
 # Visual
 ggplot(resume_automne, aes(y=year + 0.2*ifelse(cl_2alt=="Inf1050",-1,1), 
@@ -143,7 +145,7 @@ ggplot(resume_automne, aes(y=year + 0.2*ifelse(cl_2alt=="Inf1050",-1,1),
 
 sites_pheno_Alps = phenoclim %>% filter(nom_massif_v2019 == "Alpes") %>% 
   distinct(id_base_site, species, coord_x_4326, coord_y_4326, coord_x_2154, coord_y_2154,altitude, cl_alt, cl_alt2, cl_alt3, 
-           nom_zone, dept1, region1, pays1, circumference, new_cat, year
+           ID_zone, ID_zone, dept1, region1, pays1, circumference, year #new_cat, 
            )
 
 #=============================================================================================================================*
@@ -151,20 +153,22 @@ sites_pheno_Alps = phenoclim %>% filter(nom_massif_v2019 == "Alpes") %>%
 
 sites_pheno_Alps = merge(sites_pheno_Alps, 
                          merge(phenoclim[phenoclim$nom_massif_v2019=="Alpes" & phenoclim$pheno_etape_value == "Debourrement - Ok 10%",c("id_base_site","julian_day","year")],
-                               merge(phenoclim[phenoclim$nom_massif_v2019=="Alpes" & phenoclim$pheno_etape_value == "Changement de couleur - Ok 10%",c("id_base_site","julian_day","year")],
-                                     phenoclim[phenoclim$nom_massif_v2019=="Alpes" & phenoclim$pheno_etape_value == "Changement de couleur - Ok 50%",c("id_base_site","julian_day","year")], 
+                               merge(phenoclim[phenoclim$nom_massif_v2019=="Alpes" & phenoclim$pheno_etape_value == "Changement de couleur - Ok 10%",c("id_base_site","julian_day","year")] %>% distinct(id_base_site, year, .keep_all = T),
+                                     phenoclim[phenoclim$nom_massif_v2019=="Alpes" & phenoclim$pheno_etape_value == "Changement de couleur - Ok 50%",c("id_base_site","julian_day","year")] %>% distinct(id_base_site, year, .keep_all = T), 
                                      by=c("id_base_site","year"), all.x=T, all.y=T),
                                by=c("id_base_site","year"), all.x=T, all.y=T),
                          by=c("id_base_site","year"), all.x=T, all.y=T)
 colnames(sites_pheno_Alps)[(ncol(sites_pheno_Alps)-2):ncol(sites_pheno_Alps)] = c("debou10","senes10","senes50")
 
 sites_pheno_Alps = sites_pheno_Alps[!is.na(sites_pheno_Alps$year),]
+# on ne garde que les lignes où il y a des infos de sénescence
+sites_pheno_Alps = sites_pheno_Alps[!(is.na(sites_pheno_Alps$senes10) & is.na(sites_pheno_Alps$senes50)),]
 
 # dim(sites_pheno_Alps[!is.na(sites_pheno_Alps$debou10) & !is.na(sites_pheno_Alps$senes10) & !is.na(sites_pheno_Alps$senes50),])
 
 #=============================================================================================================================*
 # On récupère les précipitations de ERA5-land (Monthly averaged reanalysis)
-# --> données mensuelles de 2004 à 2024, à une résolution de 9km (https://cds.climate.copernicus.eu/requests?tab=all)
+# --> données mensuelles (précipitations totales en m) de 2004 à 2024, à une résolution de 9km (https://cds.climate.copernicus.eu/requests?tab=all)
 # --> données de précipitation --> https://codes.ecmwf.int/grib/param-db/228
 GRIB<-brick("/Users/ninonfontaine/Desktop/projetsR/TEST/data/_meteo/ERA5land_precip.grib") 
 PRECIP = GRIB[[2*(1:252)]]
@@ -179,14 +183,15 @@ PRECIP_estiv = t(as.data.frame(t(PRECIP_estiv)) %>% group_by(rep(2004:2024, each
 colnames(PRECIP_estiv) = paste0("Psummer",PRECIP_estiv[1,])
 sites_pheno_Alps = cbind(sites_pheno_Alps, PRECIP_estiv[-1,])
 
+# # Visualisation
+# par(mfrow=c(2,2))
+# for (annee in c(2004, 2010, 2023, 2024)){hist(sites_pheno_Alps[,paste0("Psummer",annee)], main=annee, xlim=c(0,0.03), breaks=10)}
+# # --> année 2023 particulièrement sèche !
+
 sites_pheno_Alps$P_summer = unlist(apply(sites_pheno_Alps[,c("year",grep("Psummer",colnames(sites_pheno_Alps), value=T))],1,
                                   function(x){x[x[1]-2002]}))
 sites_pheno_Alps = sites_pheno_Alps[,-grep("Psummer", colnames(sites_pheno_Alps))]
 
-# # Visualisation
-# par(mfrow=c(2,2))
-# for (annee in c(2004, 2010, 2023, 2024)){hist(sites_pheno_Alps[,paste0("P_summer",annee)], main=annee, xlim=c(0,0.03), breaks=10)}
-# # --> année 2023 particulièrement sèche !
 
 #=============================================================================================================================*
 # On récupère les températures via les reconstructions basées sur les stations météo Phénoclim (cf scripts reconstruction G. Klein)
@@ -249,7 +254,7 @@ for(annee in c(2006:2024)){
   reconstruc_Tday_sites$julian_day = yday(as.Date(reconstruc_Tday_sites$date))
   tabT = rename(reconstruc_Tday_sites, c(jul_day=vartabT[1], sitePheno=vartabT[2], Tmoy=vartabT[3], Tmin=vartabT[4], Tmax=vartabT[5]))
   
-  for (esp in unique(sites_pheno_Alps$species[sites_pheno_Alps$year == annee & (!is.na(sites_pheno_Alps$senes10) | !is.na(sites_pheno_Alps$senes50))])){
+  for (esp in unique(sites_pheno_Alps$species[sites_pheno_Alps$year == annee & !(is.na(sites_pheno_Alps$senes10) & is.na(sites_pheno_Alps$senes50))])){
 
     for (periode in c("med_0616","med_1624","med_0624")){
       med_debou10 = as.numeric(dates_med[dates_med$species==esp,paste0("debou10_", periode)])
@@ -322,8 +327,8 @@ senes_Alps_all$cl_alt = factor(senes_Alps_all$cl_alt, levels=c("150-450","450-75
                              ordered = T)
 
 # On crée une variable associée à la durée de la sénescence 
-# (/!\ ce n'est pas vraiment une durée puisqu'on regarde le nombre de jours entre 1à et 50% de changement de couleur)
-senes_Alps_all$duree_senes = senes_Alps_all$senes50 - senes_Alps_all$senes10
+# (/!\ ce n'est pas vraiment une durée puisqu'on regarde le nombre de jours entre 10 et 50% de changement de couleur)
+senes_Alps_all$senesduree = senes_Alps_all$senes50 - senes_Alps_all$senes10
 
 # On renomme les variables de température calculées sur la date médiane de débourrement de la période 2006-2024 ('par défaut')
 senes_Alps_all = senes_Alps_all %>% rename(Tmoy_GS = Tmoy_GS_med_0624,
@@ -345,27 +350,166 @@ senes_Alps_all = senes_Alps_all %>% rename(Tmoy_GS = Tmoy_GS_med_0624,
 
 # Remarque : au vu des corrélations entre ces variables de température, il est peu logique d'en intégrer plusieurs si elles sont trop corrélées
 corrplot::corrplot(cor(na.omit(senes_Alps_all[,varTselec])))
-# => on choisit une parmi Tmoy30, 40, 50j, GDD0, GDD5, qu'on combine avec Tmoyhiv et/ou dChill
+
+
+#-----------------------------------------------------------------------
+#*-- Aperçu de la localisation des données phénologiques automnales ----
+senes_Alps_teledec = senes_Alps_all %>% group_by(id_base_site) %>% mutate(nb_years = length(unique(year))) %>% ungroup()
+senes_Alps_leaflet = vect(senes_Alps_teledec, geom=c("coord_x_4326","coord_y_4326"), "epsg:4326")
+  
+colors = data.frame(ID = c("Bouleau_pubescent","Bouleau_verruqueux","Hetre","Meleze","Sorbier"), 
+                    col = c("darkgreen","lightgreen","brown","yellow","orange"))
+# carto = leaflet() %>% #senes_Alps_leaflet[senes_Alps_leaflet$year >= 2017,]) %>%
+#   addTiles() %>% #'http://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}')%>% 
+#   addCircleMarkers(lng = jitter(senes_Alps_teledec$coord_x_4326[senes_Alps_teledec$year >= 2017], factor = 2), lat = jitter(senes_Alps_teledec$coord_y_4326[senes_Alps_teledec$year >= 2017], factor = 2), # si on veut limiter la superposition : jitter
+#                    label = paste(senes_Alps_teledec$id_base_site[senes_Alps_teledec$year >= 2017], " : ",senes_Alps_teledec$nb_years[senes_Alps_teledec$year >= 2017], " obs.", sep=""),
+#                    fillColor =as.character(factor(senes_Alps_teledec$species,
+#                                                   levels=colors$ID,
+#                                                   labels=colors$col)), 
+#                    color="black",opacity=1,fillOpacity = 1, weight=0.1, radius=5) %>%
+#   addLegend(position="bottomright",colors=colors$col, labels = colors$ID, title = "Espece", opacity = 1)
+# carto = leaflet(senes_Alps_leaflet) %>%
+#   addTiles() %>% #'http://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}')%>% 
+#   addCircleMarkers(label = paste(senes_Alps_leaflet$id_base_site, " : ",senes_Alps_leaflet$nb_years, " obs.", sep=""),
+#                    fillColor =as.character(factor(senes_Alps_leaflet$species,
+#                                                   levels=colors$ID,
+#                                                   labels=colors$col)), 
+#                    color="black",opacity=1,fillOpacity = 1, weight=0.1, radius=5) %>%
+#   addLegend(position="bottomright",colors=colors$col, labels = colors$ID, title = "Espece", opacity = 1)
+#   
+# carto
+# 
+# Pour le croisement avec les données de télédétection (cf projet IUT Digne), on peut croiser les observations Phénoclim et les mailles / la couverture des données 
+# télédétection
+# Les données de télédétection Pléiades couvrent des tuiles de 20km --> on identifie ainsi les zones d'une vingtaine de kilomètres où on a suffisamment de données
+# Phénoclim
+# rast20km = rast(xmin=860000, xmax=1080000, ymin=6300000, ymax=6600000, resolution = 20000, crs="epsg:2154")
+# values(rast20km) = 1:length(values(rast20km))
+# names(rast20km) = "IDcell"
+# senes_Alps_teledec$IDcell = extract(rast20km, vect(senes_Alps_teledec, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))[,"IDcell"]
+senes_Alps_teledec$dept1[is.na(senes_Alps_teledec$dept1)] = senes_Alps_teledec$region1[is.na(senes_Alps_teledec$dept1)]
+
+# recap = senes_Alps_teledec %>% group_by(IDcell, species) %>% summarise(nb_arbres = length(unique(id_base_site)),
+#                                                                        nb_obssenes = length(id_base_site),
+#                                                                        nb_annees = length(unique(year)),
+#                                                                        anneemin_obssenes = min(year),
+#                                                                        anneemax_obssenes = max(year),
+#                                                                        dept = paste(unique(dept1), collapse = ", "))
+# 
+# recap = senes_Alps_teledec %>% group_by(IDcell, species) %>% 
+#                                 summarise(nb_arbres = length(unique(id_base_site)),
+#                                           nb_obssenes = length(id_base_site),
+#                                           nb_annees = length(unique(year)),
+#                                           nb_annees_par_arbre_moy = mean(nb_years),
+#                                           anneemin_obssenes = min(year),
+#                                           anneemax_obssenes = max(year),
+#                                           dept = paste(unique(dept1), collapse = ", "))
+# 
+# senes_Alps_teledec$selection = apply(senes_Alps_teledec[,c("IDcell","species")], 1,
+#                                      function(X, rec=recap){rec = rec[rec$species == X[2],]
+#                                      return(ifelse(X[1] %in% rec$IDcell[rec$nb_arbres >=5 & rec$nb_obssenes >=10], X[2],"-"))})
+# senes_Alps_teledec$selection = ifelse(apply(senes_Alps_teledec[,c("IDcell","species")], 1,
+#                                      function(X, rec=recap){rec = rec[rec$species == X[2],]
+#                                      return(ifelse(X[1] %in% rec$IDcell[rec$nb_arbres >=5 & rec$nb_obssenes >=10], X[2],"-"))}) == senes_Alps_teledec$species, "oui","non")
+# 
+# 
+# senes_Alps_leaflet = vect(senes_Alps_teledec, geom=c("coord_x_4326","coord_y_4326"), "epsg:4326")
+# 
+# # carto_selec = leaflet(senes_Alps_leaflet[grep("oui",senes_Alps_leaflet$selection),]) %>%
+# carto_selec = leaflet(senes_Alps_leaflet) %>%
+#   addTiles() %>% #'http://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}')%>%
+#   addCircleMarkers(label = paste("nbyr: ",senes_Alps_leaflet$nb_years,"cell: ",senes_Alps_leaflet$IDcell),#paste(senes_Alps_leaflet$id_base_site[grep("oui",senes_Alps_leaflet$selection)], " : ",senes_Alps_leaflet$nb_years[grep("oui",senes_Alps_leaflet$selection)], " obs.", sep=""),
+#                    fillColor =as.character(factor(senes_Alps_leaflet$species,#[grep("oui",senes_Alps_leaflet$selection)],
+#                                                   levels=colors$ID,
+#                                                   labels=colors$col)),
+#                    radius = as.character(factor(senes_Alps_leaflet$nb_years >5,
+#                                                 levels=c(T,F),
+#                                                 labels=c(5,2))),
+#                    fillOpacity = as.character(factor(senes_Alps_leaflet$IDcell %in% c(29,30,53,54, 127,128,138,139, 94,115,116),
+#                                                 levels=c(T,F),
+#                                                 labels=c(1,0.7))),
+#                    color="black",opacity=1, weight=0.1) %>%
+#   addLegend(position="bottomright",colors=colors$col, labels = colors$ID, title = "Espece", opacity = 1)
+# 
+# carto_selec
+  
+
+
+recap2 = senes_Alps_teledec %>% group_by(ID_zone, species) %>% 
+  summarise(x = mean(coord_x_4326), y = mean(coord_y_4326),
+            nb_arbres = length(unique(id_base_site)),
+            nb_obssenes = length(id_base_site),
+            nb_annees = length(unique(year)),
+            nb_annees_par_arbre_moy = mean(nb_years),
+            anneemin_obssenes = min(year),
+            anneemax_obssenes = max(year),
+            dept = paste(unique(dept1), collapse = ", "))
+leaflet(recap2) %>%
+  addTiles() %>% #'http://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}')%>%
+  addCircleMarkers(lng=~x, lat=~y,
+                   label = paste("IDzone: ", recap2$ID_zone, ", nbobs: ",recap2$nb_obssenes,", nbyears: ",recap2$nb_annees_par_arbre_moy),
+                   fillColor =as.character(factor(recap2$species,#[grep("oui",senes_Alps_leaflet$selection)],
+                                                  levels=colors$ID,
+                                                  labels=colors$col)),
+                   radius = ~nb_obssenes*0.1,
+                   fillOpacity = 1,
+                   color="black",opacity=1, weight=0.1) %>%
+  addLegend(position="bottomright",colors=colors$col, labels = colors$ID, title = "Espece", opacity = 1)
+
+# Les ID_zone intéressants sont :
+# - Chamonix : zone692
+# - Gran Paradisio E : zone782, zone783, zone784
+# - Gran Paradisio W : zone750 (nombreuses zones alentours, mais avec moins d'observations)
+# - Vanoise : zone521
+# - Mercantour : zone687
+# - Vercors : zone279
+# - Ecrins : zone554, zone552, zone615
+# - Digne-Auzet : zone512
+# On crée un buffer de 10km autour de ces zones, pour capter les points supplémentaires, où il y a moins de données mais où ça peut apporter des points complémentaires
+senes_Alps_teledec$selec = as.character(factor(senes_Alps_teledec$ID_zone,
+                                  levels = c("zone692", "zone782", "zone783", "zone784", "zone750", "zone521","zone687","zone279","zone554","zone552","zone615", "zone512"),
+                                  labels = c("Chamonix",rep("GranParadisioE",3), "GranParadisioW", "Vanoise","Mercantour","Vercors",rep("Ecrins",3),"Digne-Auzet")))
+vectselec = aggregate(buffer(vect(senes_Alps_teledec[!is.na(senes_Alps_teledec$selec),], geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"), 10000))
+senes_Alps_teledec$selec[is.na(senes_Alps_teledec$selec)] = ifelse(as.vector(extract(vectselec, senes_Alps_teledec[is.na(senes_Alps_teledec$selec),c("coord_x_2154","coord_y_2154")])[,2])==1,"extra",NA)
+
+# Si c'est une autre espèce que mélèze, bouleau verruqueux ou sorbier, on les met en "extra"
+senes_Alps_teledec$selec[!is.na(senes_Alps_teledec$selec) & !(senes_Alps_teledec$species %in% c("Bouleau_verruqueux","Sorbier","Meleze"))] = "extra"
+
+
+write.csv(senes_Alps_teledec[!is.na(senes_Alps_teledec$selec),c(1:19, 71,72)], "/Users/ninonfontaine/Desktop/projetsR/TEST/data/PhenoClim/data_projetIUT_senes.csv")
+writeVector(vectselec, "/Users/ninonfontaine/Desktop/projetsR/TEST/data/PhenoClim/data_projetIUT_zones_senes.shp")
+
+leaflet(vect(senes_Alps_teledec[!is.na(senes_Alps_teledec$selec),], geom=c("coord_x_4326","coord_y_4326"), "epsg:4326")) %>%
+  addTiles() %>% #'http://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}')%>%
+  addCircleMarkers(label = paste("IDzone: ", senes_Alps_teledec$ID_zone),#, ", nbobs: ",recap2$nb_obssenes,", nbyears: ",recap2$nb_annees_par_arbre_moy),
+                   fillColor =as.character(factor(senes_Alps_teledec$species[!is.na(senes_Alps_teledec$selec)],#[grep("oui",senes_Alps_leaflet$selection)],
+                                                  levels=colors$ID,
+                                                  labels=colors$col)),
+                   radius = ifelse(senes_Alps_teledec$selec[!is.na(senes_Alps_teledec$selec)]=="extra",3,7),
+                   fillOpacity = 1,
+                   color="black",opacity=1, weight=0.1) %>%
+  addLegend(position="bottomright",colors=colors$col, labels = colors$ID, title = "Espece", opacity = 1)
+
 
 
 ##############################################-
 # *-- ONSET DE SÉNESCENCE                  ----
 ##############################################-
 
-senes_Alps = senes_Alps_all[!is.na(senes_Alps_all$senes10),]
+senes10_Alps = senes_Alps_all[!is.na(senes_Alps_all$senes10),]
 
 # # Aperçu des données de sénescence
-# ggplot(senes_Alps[!is.na(senes_Alps$Tmoy_GS),], aes(x=altitude, y=senes10, col=species)) + geom_point() + 
+# ggplot(senes10_Alps[!is.na(senes10_Alps$Tmoy_GS),], aes(x=altitude, y=senes10, col=species)) + geom_point() + 
 #   theme(legend.position = "none") + facet_wrap(.~year) + geom_smooth(method=lm) + ylim(200,325)
-# ggplot(senes_Alps[!is.na(senes_Alps$Tmoy_GS),], aes(x=Tmoy_GS, y=senes10, col=species)) + geom_point() + 
+# ggplot(senes10_Alps[!is.na(senes10_Alps$Tmoy_GS),], aes(x=Tmoy_GS, y=senes10, col=species)) + geom_point() + 
 #   theme(legend.position = "none") + facet_wrap(.~year) + geom_smooth(method=lm) + ylim(200,325)
-# ggplot(senes_Alps[!is.na(senes_Alps$Tmoy_GS),], aes(x=Tmoy_GS, y=senes10, col=yearQ)) + geom_point() + 
+# ggplot(senes10_Alps[!is.na(senes10_Alps$Tmoy_GS),], aes(x=Tmoy_GS, y=senes10, col=yearQ)) + geom_point() + 
 #   theme(legend.position = "none") + facet_wrap(.~species) + geom_smooth(method=lm) + ylim(200,325)
-# ggplot(senes_Alps[!is.na(senes_Alps$Tmoy_GS),], aes(x=GDDinv20_jsenes10, y=senes10, col=yearQ)) + geom_point() + 
+# ggplot(senes10_Alps[!is.na(senes10_Alps$Tmoy_GS),], aes(x=GDDinv20_jsenes10, y=senes10, col=yearQ)) + geom_point() + 
 #   theme(legend.position = "none") + facet_wrap(.~species) + geom_smooth(method=lm) + ylim(200,325)
-# ggplot(senes_Alps[!is.na(senes_Alps$Tmoy_GS),], aes(x=P_summer, y=senes10)) + geom_point() + 
+# ggplot(senes10_Alps[!is.na(senes10_Alps$Tmoy_GS),], aes(x=P_summer, y=senes10)) + geom_point() + 
 #   theme(legend.position = "none") + facet_wrap(.~species) + geom_smooth(method=lm) + ylim(200,325)
-# ggplot(senes_Alps[!is.na(senes_Alps$Tmoy_GS),], aes(x=debou10, y=senes10)) + geom_point() +
+# ggplot(senes10_Alps[!is.na(senes10_Alps$Tmoy_GS),], aes(x=debou10, y=senes10)) + geom_point() +
 #   theme(legend.position = "none") + facet_wrap(.~species) + geom_smooth(method=lm) + ylim(200,325)
 
 
@@ -376,72 +520,91 @@ senes_Alps = senes_Alps_all[!is.na(senes_Alps_all$senes10),]
 resultats = data.frame(species = NA, variable = NA, coef = NA, std=NA, pval=NA, varexpli=NA)
 
 # Initialisation d'un tableau pour comparer l'intérêt d'avoir des modèles intégrant la température, par rapport aux modèles avec année et altitude
-R2_models = data.frame(species = unique(senes_Alps$species), R2_altyear_fixef = NA, R2_altyear_allef = NA, R2_bestmod_fixef = NA, R2_bestmod_allef = NA)
+R2_models = data.frame(species = unique(senes10_Alps$species), 
+                       R2_altyear_fixef = NA, R2_altyear_allef = NA, R2_altyear_calibval = NA, 
+                       R2_bestmod_fixef = NA, R2_bestmod_allef = NA, R2_bestmod_calibval = NA)
 
 # Initialisation d'une liste avec tous les meilleurs modèles
 bestmods = list()
+altyearmods = list()
 
 
 ##############################################-
 #*---- Bouleau verruqueux ----
 
-senes_Bpen = senes_Alps[senes_Alps$species == "Bouleau_verruqueux",]
-# ggplot(senes_Bpen, aes(x=year)) + geom_histogram(binwidth=1) 
+senes10_Bpen = senes10_Alps[senes10_Alps$species == "Bouleau_verruqueux",]
 # # on retire les lignes où on n'a pas de données de température (2005)
-senes_Bpen = senes_Bpen[!is.na(senes_Bpen$Tmoy_GS),]
+senes10_Bpen = senes10_Bpen[!is.na(senes10_Bpen$Tmoy_GS),]
+ggplot(senes10_Bpen, aes(x=senes10)) + geom_histogram(binwidth=5)
 # On retire une valeur extrême (sénescence notée à 78jours = 18/03 !)
-senes_Bpen = senes_Bpen[senes_Bpen$senes10 > 100,]
-# ggplot(senes_Bpen, aes(x=year, y=julian_day)) + geom_point() + geom_smooth(method=lm) + labs(title = "Changement de couleur 10% - Bouleau", x="année",y="jour julien")
+senes10_Bpen = senes10_Bpen[senes10_Bpen$senes10 > 100,]
+# ggplot(senes10_Bpen, aes(x=year, y=julian_day)) + geom_point() + geom_smooth(method=lm) + labs(title = "Changement de couleur 10% - Bouleau", x="année",y="jour julien")
 
 #*-------- 1) On regarde un modèle simple comme dans Bison et al. 2019, avec seulement altitude et année ---- 
-mod_senes_Bpen_Altyear <- lmer(senes10 ~ altitude + year + (year|nom_zone), senes_Bpen, REML=F)
-summary(mod_senes_Bpen_Altyear)
+mod_senes10_Bpen_Altyear <- lmer(senes10 ~ altitude + year + (year|ID_zone), senes10_Bpen, REML=F)
+summary(mod_senes10_Bpen_Altyear)
+altyearmods = c(list("Bouleau_verruqueux"=mod_senes10_Bpen_Altyear), altyearmods)
 
 # On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
-R2_models[R2_models$species == "Bouleau_verruqueux", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes_Bpen_Altyear)
+R2_models[R2_models$species == "Bouleau_verruqueux", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes10_Bpen_Altyear)
+# + Validation croisée
+n = nrow(senes10_Bpen)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes10_Bpen[trainIndex ,]
+test <- senes10_Bpen[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes10_Bpen$ID_zone[drop=T])[!unique(senes10_Bpen$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_senes10_Bpen_Altyear), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Bouleau_verruqueux", "R2_altyear_calibval"] = summary(lm(predictions~senes10, test2))[["adj.r.squared"]]
 
 
 #*-------- 2) On teste l'effet de différentes variables climatiques à la place des variables année et altitude ---- 
 # On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
 
-# mod_senes_Bpen_debou10 <- lmer(senes10 ~ debou10 + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F) 
-# # /!\ on ne peut pas comparer ce modèle avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
+# # /!\ on ne peut pas comparer le modèle avec débourrement avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
 # #     => on compare tous les modèles avec la DB sans NA dans debou10, si c'est moins bon on prend la DB globale sans considérer la variable debou10
-mod_senes_Bpen_P_summer <- lmer(senes10 ~ P_summer + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_Tmoy_GS <- lmer(senes10 ~ Tmoy_GS + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_Tmoy_MJ <- lmer(senes10 ~ Tmoy_MJ + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_Tmoy_AS <- lmer(senes10 ~ Tmoy_AS + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_Tmoy_ASO <- lmer(senes10 ~ Tmoy_ASO + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_Tnight21j_jsenes10 <- lmer(senes10 ~ Tnight21j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_Tnight30j_jsenes10 <- lmer(senes10 ~ Tnight30j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_Tnight40j_jsenes10 <- lmer(senes10 ~ Tnight40j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_GDDinv25_jsenes10 <- lmer(senes10 ~ GDDinv25_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_GDDinv20_jsenes10 <- lmer(senes10 ~ GDDinv20_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_GDDinv15_jsenes10 <- lmer(senes10 ~ GDDinv15_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
+senes10_Bpen_all = senes10_Bpen
+# ICI le timing de débourrement ne semble pas affecter la sénescence
+senes10_Bpen = senes10_Bpen_all# senes10_Bpen[!is.na(senes10_Bpen$debou10),] #senes10_Bpen_all
 
-AIC(#mod_senes_Bpen_debou10, 
-    mod_senes_Bpen_P_summer,mod_senes_Bpen_Tmoy_GS,mod_senes_Bpen_Tmoy_MJ,mod_senes_Bpen_Tmoy_AS,mod_senes_Bpen_Tmoy_ASO,
-    mod_senes_Bpen_Tnight21j_jsenes10,mod_senes_Bpen_Tnight30j_jsenes10,mod_senes_Bpen_Tnight40j_jsenes10,
-    mod_senes_Bpen_GDDinv25_jsenes10,mod_senes_Bpen_GDDinv20_jsenes10,mod_senes_Bpen_GDDinv15_jsenes10)
-# Les variables de GDDinverse à 25 et 20°C donnent les meilleurs résultats (AIC = 13346.73)... on regarde en version multivariables
+mod_senes10_Bpen_debou10 <- lmer(senes10 ~ debou10 + (1|ID_zone) + (1|yearQ), senes10_Bpen, REML=F) 
+mod_senes10_Bpen_P_summer <- lmer(senes10 ~ P_summer + (1|ID_zone) + (1|yearQ), senes10_Bpen, REML=F)
+mod_senes10_Bpen_Tmoy_GS <- lmer(senes10 ~ Tmoy_GS + (1|ID_zone) + (1|yearQ), senes10_Bpen, REML=F)
+mod_senes10_Bpen_Tmoy_MJ <- lmer(senes10 ~ Tmoy_MJ + (1|ID_zone) + (1|yearQ), senes10_Bpen, REML=F)
+mod_senes10_Bpen_Tmoy_AS <- lmer(senes10 ~ Tmoy_AS + (1|ID_zone) + (1|yearQ), senes10_Bpen, REML=F)
+mod_senes10_Bpen_Tmoy_ASO <- lmer(senes10 ~ Tmoy_ASO + (1|ID_zone) + (1|yearQ), senes10_Bpen, REML=F)
+mod_senes10_Bpen_Tnight21j_jsenes10 <- lmer(senes10 ~ Tnight21j_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Bpen, REML=F)
+mod_senes10_Bpen_Tnight30j_jsenes10 <- lmer(senes10 ~ Tnight30j_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Bpen, REML=F)
+mod_senes10_Bpen_Tnight40j_jsenes10 <- lmer(senes10 ~ Tnight40j_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Bpen, REML=F)
+mod_senes10_Bpen_GDDinv25_jsenes10 <- lmer(senes10 ~ GDDinv25_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Bpen, REML=F)
+mod_senes10_Bpen_GDDinv20_jsenes10 <- lmer(senes10 ~ GDDinv20_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Bpen, REML=F)
+mod_senes10_Bpen_GDDinv15_jsenes10 <- lmer(senes10 ~ GDDinv15_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Bpen, REML=F)
+
+AIC(mod_senes10_Bpen_debou10, 
+    mod_senes10_Bpen_P_summer,mod_senes10_Bpen_Tmoy_GS,mod_senes10_Bpen_Tmoy_MJ,mod_senes10_Bpen_Tmoy_AS,mod_senes10_Bpen_Tmoy_ASO,
+    mod_senes10_Bpen_Tnight21j_jsenes10,mod_senes10_Bpen_Tnight30j_jsenes10,mod_senes10_Bpen_Tnight40j_jsenes10,
+    mod_senes10_Bpen_GDDinv25_jsenes10,mod_senes10_Bpen_GDDinv20_jsenes10,mod_senes10_Bpen_GDDinv15_jsenes10)
+# Les variables de GDDinverse à 25 et 20°C donnent les meilleurs résultats (AIC = 13502)... on regarde en version multivariables
 
 
 # On peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
 summary(lmer(senes10 ~ P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
                                Tnight21j_jsenes10 + Tnight30j_jsenes10 + Tnight40j_jsenes10 +
                                GDDinv25_jsenes10 + GDDinv20_jsenes10 + GDDinv15_jsenes10 +
-                               (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F), corr=F)
-# On enlève les variables une par une (en fonction des pvalues), et on regarde également l'AIC 
-# En combinant ces 2 critères (AIC et significativité des effets), on retient donc :
-mod_senes_Bpen_multivar = lmer(senes10 ~ P_summer + Tmoy_ASO + Tnight30j_jsenes10 + GDDinv25_jsenes10 + 
-                               (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F) # AIC = 13338.5
-# visreg(mod_senes_Bpen_multivar, "GDDinv25_jsenes10")
+                               (1|ID_zone) + (1|yearQ), senes10_Bpen, REML=F), corr=F)
+# On enlève les variables une par une (en fonction des pvalues), et on regarde également l'AIC et la corrélation entre variables
+# En combinant ces 3 critères (AIC, corrélations, significativité des effets), on retient donc :
+mod_senes10_Bpen_multivar = lmer(senes10 ~ P_summer + GDDinv25_jsenes10 + 
+                               (1|ID_zone) + (1|yearQ), senes10_Bpen, REML=F) # AIC = 13422.9
+# visreg(mod_senes10_Bpen_multivar, "GDDinv25_jsenes10")
 
 # On peut aussi complexifier en ajoutant des interactions :
-mod_senes_Bpen_multivar = lmer(senes10 ~ P_summer * GDDinv25_jsenes10 + 
-                                 (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F) # AIC = 13334.6
-# visreg(mod_senes_Bpen_multivar, "GDDinv25_jsenes10", by="P_summer")
-visreg(mod_senes_Bpen_multivar, "P_summer", by="GDDinv25_jsenes10")
+mod_senes10_Bpen_multivar = lmer(senes10 ~ P_summer * GDDinv25_jsenes10 + 
+                                 (1|ID_zone) + (1|yearQ), senes10_Bpen, REML=F) # AIC = 13417.5
+# visreg(mod_senes10_Bpen_multivar, "GDDinv25_jsenes10", by="P_summer")
+visreg(mod_senes10_Bpen_multivar, "P_summer", by="GDDinv25_jsenes10")
 
 
 #*-------- 3) On complexifie le modèle ---- 
@@ -449,185 +612,235 @@ visreg(mod_senes_Bpen_multivar, "P_summer", by="GDDinv25_jsenes10")
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-bestmod_senes_Bpen = lmer(senes10 ~ P_summer * GDDinv25_jsenes10 + altitude +
-                                 (1|nom_zone) + (P_summer|yearQ), senes_Bpen, REML=F) # AIC = 13328.7
-bestmods = c(list("Bouleau_verruqueux"=bestmod_senes_Bpen), bestmods)
+bestmod_senes10_Bpen = lmer(senes10 ~ P_summer * GDDinv25_jsenes10 + altitude +
+                                 (1|ID_zone) + (1|yearQ), senes10_Bpen, REML=F) # AIC = 13411.8
+bestmods = c(list("Bouleau_verruqueux"=bestmod_senes10_Bpen), bestmods)
 
 
-summary(bestmod_senes_Bpen)
+summary(bestmod_senes10_Bpen)
 # gradient altitudinal : sénescence 0.9 jour plus tôt quand on monte de 100m
-# précipitations : sénescence 1.8 jour plus tôt quand on gagne 1mm de pluie
-# accumulation de "froid" : sénescence 2.0 jours plus tôt quand on gagne 1°C de froid
-qqnorm(resid(bestmod_senes_Bpen))
-qqline(resid(bestmod_senes_Bpen))
+# précipitations : sénescence 2.3 jours plus tôt quand on gagne 1mm de pluie 
+# accumulation de "froid" : sénescence 2.2 jours plus tôt quand on gagne 1°C de froid // effet d'avancée moins marqué s'il y a plus de pluie l'été
+qqnorm(resid(bestmod_senes10_Bpen))
+qqline(resid(bestmod_senes10_Bpen))
 
 # Effets fixes VS tous les effets inclus
-R2_models[R2_models$species == "Bouleau_verruqueux", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes_Bpen)
+R2_models[R2_models$species == "Bouleau_verruqueux", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes10_Bpen)
 # R2 des effets fixes très très nul !!
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_senes10_Bpen)
+# - Validation croisée
+n = nrow(senes10_Bpen)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes10_Bpen[trainIndex ,]
+test <- senes10_Bpen[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes10_Bpen$ID_zone[drop=T])[!unique(senes10_Bpen$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(bestmod_senes10_Bpen), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+# # R2 ajusté = 0.7489
+R2_models[R2_models$species == "Bouleau_verruqueux", "R2_bestmod_calibval"] = summary(lm(predictions~senes10, test2))[["adj.r.squared"]]
 
-# Part de variance expliquée par les différentes variables
-calcVarPart(bestmod_senes_Bpen)
 
 
 resultats = rbind(resultats, data.frame(species = "Bouleau_verruqueux",
-                                        variable = rownames(coef(summary(bestmod_senes_Bpen))),
-                                        coef = coef(summary(bestmod_senes_Bpen))[,1],
-                                        std = coef(summary(bestmod_senes_Bpen))[,2],
-                                        pval = coef(summary(bestmod_senes_Bpen))[,5],
-                                        varexpli = calcVarPart(bestmod_senes_Bpen)[rownames(coef(summary(bestmod_senes_Bpen)))]))
+                                        variable = rownames(coef(summary(bestmod_senes10_Bpen))),
+                                        coef = coef(summary(bestmod_senes10_Bpen))[,1],
+                                        std = coef(summary(bestmod_senes10_Bpen))[,2],
+                                        pval = coef(summary(bestmod_senes10_Bpen))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_senes10_Bpen)[rownames(coef(summary(bestmod_senes10_Bpen)))], error = function(e) return(NA))))
 
 
 
 ##############################################-
 #*---- Meleze ----
 
-senes_Ldec = senes_Alps[senes_Alps$species == "Meleze",]
-# ggplot(senes_Ldec, aes(x=year)) + geom_histogram(binwidth=1) 
+senes10_Ldec = senes10_Alps[senes10_Alps$species == "Meleze",]
 # # on retire les lignes où on n'a pas de données de température (2005)
-senes_Ldec = senes_Ldec[!is.na(senes_Ldec$Tmoy_GS),]
+senes10_Ldec = senes10_Ldec[!is.na(senes10_Ldec$Tmoy_GS),]
+ggplot(senes10_Ldec, aes(x=senes10)) + geom_histogram(binwidth=5)
 
 
 #*-------- 1) On regarde un modèle simple comme dans Bison et al. 2019, avec seulement altitude et année ---- 
-mod_senes_Ldec_Altyear <- lmer(senes10 ~ altitude + year + (year|nom_zone), senes_Ldec, REML=F)
-summary(mod_senes_Ldec_Altyear)
+mod_senes10_Ldec_Altyear <- lmer(senes10 ~ altitude + year + (year|ID_zone), senes10_Ldec, REML=F)
+summary(mod_senes10_Ldec_Altyear)
+altyearmods = c(list("Meleze"=mod_senes10_Ldec_Altyear), altyearmods)
 
 # On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
-R2_models[R2_models$species == "Meleze", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes_Ldec_Altyear)
+R2_models[R2_models$species == "Meleze", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes10_Ldec_Altyear)
+# + Validation croisée
+n = nrow(senes10_Ldec)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes10_Ldec[trainIndex ,]
+test <- senes10_Ldec[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes10_Ldec$ID_zone[drop=T])[!unique(senes10_Ldec$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_senes10_Ldec_Altyear), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Meleze", "R2_altyear_calibval"] = summary(lm(predictions~senes10, test2))[["adj.r.squared"]]
 
 
 #*-------- 2) On teste l'effet de différentes variables climatiques à la place des variables année et altitude ---- 
 # On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
 
-# mod_senes_Ldec_debou10 <- lmer(senes10 ~ debou10 + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-# /!\ on ne peut pas comparer ce modèle avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
-#     => on compare tous les modèles avec la DB sans NA dans debou10, si c'est moins bon on prend la DB globale sans considérer la variable debou10
-mod_senes_Ldec_P_summer <- lmer(senes10 ~ P_summer + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_Tmoy_GS <- lmer(senes10 ~ Tmoy_GS + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_Tmoy_MJ <- lmer(senes10 ~ Tmoy_MJ + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_Tmoy_AS <- lmer(senes10 ~ Tmoy_AS + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_Tmoy_ASO <- lmer(senes10 ~ Tmoy_ASO + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_Tnight21j_jsenes10 <- lmer(senes10 ~ Tnight21j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_Tnight30j_jsenes10 <- lmer(senes10 ~ Tnight30j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_Tnight40j_jsenes10 <- lmer(senes10 ~ Tnight40j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_GDDinv25_jsenes10 <- lmer(senes10 ~ GDDinv25_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_GDDinv20_jsenes10 <- lmer(senes10 ~ GDDinv20_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_GDDinv15_jsenes10 <- lmer(senes10 ~ GDDinv15_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
+# # /!\ on ne peut pas comparer le modèle avec débourrement avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
+# #     => on compare tous les modèles avec la DB sans NA dans debou10, si c'est moins bon on prend la DB globale sans considérer la variable debou10
+senes10_Ldec_all = senes10_Ldec
+# ICI le timing de débourrement ne semble pas affecter la sénescence
+senes10_Ldec = senes10_Ldec_all#senes10_Ldec[!is.na(senes10_Ldec$debou10),] #senes10_Ldec_all
 
-AIC(#mod_senes_Ldec_debou10, 
-  mod_senes_Ldec_P_summer,mod_senes_Ldec_Tmoy_GS,mod_senes_Ldec_Tmoy_MJ,mod_senes_Ldec_Tmoy_AS,mod_senes_Ldec_Tmoy_ASO,
-  mod_senes_Ldec_Tnight21j_jsenes10,mod_senes_Ldec_Tnight30j_jsenes10,mod_senes_Ldec_Tnight40j_jsenes10,
-  mod_senes_Ldec_GDDinv25_jsenes10,mod_senes_Ldec_GDDinv20_jsenes10,mod_senes_Ldec_GDDinv15_jsenes10)
-# Les températures moyennes estivales (août-septembre) donnent les meilleurs résultats (AIC = 13716.53)... on regarde en version multivariables
+mod_senes10_Ldec_debou10 <- lmer(senes10 ~ debou10 + (1|ID_zone) + (1|yearQ), senes10_Ldec, REML=F) 
+mod_senes10_Ldec_P_summer <- lmer(senes10 ~ P_summer + (1|ID_zone) + (1|yearQ), senes10_Ldec, REML=F)
+mod_senes10_Ldec_Tmoy_GS <- lmer(senes10 ~ Tmoy_GS + (1|ID_zone) + (1|yearQ), senes10_Ldec, REML=F)
+mod_senes10_Ldec_Tmoy_MJ <- lmer(senes10 ~ Tmoy_MJ + (1|ID_zone) + (1|yearQ), senes10_Ldec, REML=F)
+mod_senes10_Ldec_Tmoy_AS <- lmer(senes10 ~ Tmoy_AS + (1|ID_zone) + (1|yearQ), senes10_Ldec, REML=F)
+mod_senes10_Ldec_Tmoy_ASO <- lmer(senes10 ~ Tmoy_ASO + (1|ID_zone) + (1|yearQ), senes10_Ldec, REML=F)
+mod_senes10_Ldec_Tnight21j_jsenes10 <- lmer(senes10 ~ Tnight21j_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Ldec, REML=F)
+mod_senes10_Ldec_Tnight30j_jsenes10 <- lmer(senes10 ~ Tnight30j_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Ldec, REML=F)
+mod_senes10_Ldec_Tnight40j_jsenes10 <- lmer(senes10 ~ Tnight40j_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Ldec, REML=F)
+mod_senes10_Ldec_GDDinv25_jsenes10 <- lmer(senes10 ~ GDDinv25_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Ldec, REML=F)
+mod_senes10_Ldec_GDDinv20_jsenes10 <- lmer(senes10 ~ GDDinv20_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Ldec, REML=F)
+mod_senes10_Ldec_GDDinv15_jsenes10 <- lmer(senes10 ~ GDDinv15_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Ldec, REML=F)
+
+AIC(mod_senes10_Ldec_debou10, 
+    mod_senes10_Ldec_P_summer,mod_senes10_Ldec_Tmoy_GS,mod_senes10_Ldec_Tmoy_MJ,mod_senes10_Ldec_Tmoy_AS,mod_senes10_Ldec_Tmoy_ASO,
+    mod_senes10_Ldec_Tnight21j_jsenes10,mod_senes10_Ldec_Tnight30j_jsenes10,mod_senes10_Ldec_Tnight40j_jsenes10,
+    mod_senes10_Ldec_GDDinv25_jsenes10,mod_senes10_Ldec_GDDinv20_jsenes10,mod_senes10_Ldec_GDDinv15_jsenes10)
+# Les températures moyennes estivales (août-septembre) donnent les meilleurs résultats (AIC = 13870.48)... on regarde en version multivariables
 
 
 # On peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
 summary(lmer(senes10 ~ P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
                Tnight21j_jsenes10 + Tnight30j_jsenes10 + Tnight40j_jsenes10 +
                GDDinv25_jsenes10 + GDDinv20_jsenes10 + GDDinv15_jsenes10 +
-               (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F), corr=F)
+               (1|ID_zone) + (1|yearQ), senes10_Ldec, REML=F), corr=F)
 # On enlève les variables une par une (en fonction des pvalues), et on regarde également l'AIC 
 # En combinant ces 2 critères (AIC et significativité des effets), on reste sur le modèle à une variable :
-mod_senes_Ldec_multivar = lmer(senes10 ~ Tmoy_AS + 
-                                 (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F) # AIC = 13716.5
-# visreg(mod_senes_Ldec_multivar, "Tmoy_AS")
+mod_senes10_Ldec_multivar = lmer(senes10 ~ Tmoy_GS + 
+                                 (1|ID_zone) + (1|yearQ), senes10_Ldec, REML=F) # AIC = 13835.2
+# visreg(mod_senes10_Ldec_multivar, "Tmoy_GS")
 
-# # On peut aussi complexifier en ajoutant des interactions :
-# mod_senes_Ldec_multivar = lmer(senes10 ~ P_summer * GDDinv25_jsenes10 + 
-#                                  (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F) 
-# # -> ça n'améliore pas les modèles
 
 #*-------- 3) On complexifie le modèle ---- 
 # On teste en complexifiant le modèle [différents test à faire] :
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-bestmod_senes_Ldec = lmer(senes10 ~ Tmoy_AS  +
-                            (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F) # AIC = 13716.5
-bestmods = c(list("Meleze"=bestmod_senes_Ldec), bestmods)
+bestmod_senes10_Ldec = lmer(senes10 ~ altitude  +
+                            (1|ID_zone) + (1|yearQ), senes10_Ldec, REML=F) # AIC = 13840.1
+# Finalement l'altitude donne de meilleurs scores que les variables climatiques...!
+bestmods = c(list("Meleze"=bestmod_senes10_Ldec), bestmods)
 
 
-summary(bestmod_senes_Ldec)
-# Quand il fait plus chaud en été : sénescence 1.2 jours plus tard quand on gagne 1°C l'été
-qqnorm(resid(bestmod_senes_Ldec))
-qqline(resid(bestmod_senes_Ldec))
+summary(bestmod_senes10_Ldec)
+# Sénescence qui commence 2.4 jours plus tôt par 100m d'altitude
+qqnorm(resid(bestmod_senes10_Ldec))
+qqline(resid(bestmod_senes10_Ldec))
 # /!\ résidus !!!
 
 # Effets fixes VS tous les effets inclus
-R2_models[R2_models$species == "Meleze", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes_Ldec)
-# R2 des effets fixes très très nul !! Voire moins bien que le modèle altitude + année !
-
-# Part de variance expliquée par les différentes variables
-calcVarPart(bestmod_senes_Ldec)
+R2_models[R2_models$species == "Meleze", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes10_Ldec)
+# R2 des effets fixes plutôt nul !!
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_senes10_Ldec)
+# - Validation croisée
+n = nrow(senes10_Ldec)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes10_Ldec[trainIndex ,]
+test <- senes10_Ldec[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes10_Ldec$ID_zone[drop=T])[!unique(senes10_Ldec$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(bestmod_senes10_Ldec), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Meleze", "R2_bestmod_calibval"] = summary(lm(predictions~senes10, test2))[["adj.r.squared"]]
 
 
 resultats = rbind(resultats, data.frame(species = "Meleze",
-                                        variable = rownames(coef(summary(bestmod_senes_Ldec))),
-                                        coef = coef(summary(bestmod_senes_Ldec))[,1],
-                                        std = coef(summary(bestmod_senes_Ldec))[,2],
-                                        pval = coef(summary(bestmod_senes_Ldec))[,5],
-                                        varexpli = calcVarPart(bestmod_senes_Ldec)[rownames(coef(summary(bestmod_senes_Ldec)))]))
+                                        variable = rownames(coef(summary(bestmod_senes10_Ldec))),
+                                        coef = coef(summary(bestmod_senes10_Ldec))[,1],
+                                        std = coef(summary(bestmod_senes10_Ldec))[,2],
+                                        pval = coef(summary(bestmod_senes10_Ldec))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_senes10_Ldec)[rownames(coef(summary(bestmod_senes10_Ldec)))], error = function(e) return(NA))))
 
 
 
 ##############################################-
 #*---- Bouleau pubescent ----
 
-senes_Bpub = senes_Alps[senes_Alps$species == "Bouleau_pubescent",]
-# ggplot(senes_Bpub, aes(x=year)) + geom_histogram(binwidth=1) 
+senes10_Bpub = senes10_Alps[senes10_Alps$species == "Bouleau_pubescent",]
+# ggplot(senes10_Bpub, aes(x=year)) + geom_histogram(binwidth=1) 
 # # on retire les lignes où on n'a pas de données de température (2005)
-senes_Bpub = senes_Bpub[!is.na(senes_Bpub$Tmoy_GS),]
-
+senes10_Bpub = senes10_Bpub[!is.na(senes10_Bpub$Tmoy_GS),]
+ggplot(senes10_Bpub, aes(x=senes10)) + geom_histogram(binwidth=5)
 
 #*-------- 1) On regarde un modèle simple comme dans Bison et al. 2019, avec seulement altitude et année ---- 
-mod_senes_Bpub_Altyear <- lmer(senes10 ~ altitude + year + (year|nom_zone), senes_Bpub, REML=F)
-summary(mod_senes_Bpub_Altyear)
+mod_senes10_Bpub_Altyear <- lmer(senes10 ~ altitude + year + (year|ID_zone), senes10_Bpub, REML=F)
+summary(mod_senes10_Bpub_Altyear)
+altyearmods = c(list("Bouleau_pubescent"=mod_senes10_Bpub_Altyear), altyearmods)
 
 # On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
-R2_models[R2_models$species == "Bouleau_pubescent", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes_Bpub_Altyear)
+R2_models[R2_models$species == "Bouleau_pubescent", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes10_Bpub_Altyear)
+# + Validation croisée
+n = nrow(senes10_Bpub)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes10_Bpub[trainIndex ,]
+test <- senes10_Bpub[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes10_Bpub$ID_zone[drop=T])[!unique(senes10_Bpub$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_senes10_Bpub_Altyear), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Bouleau_pubescent", "R2_altyear_calibval"] = summary(lm(predictions~senes10, test2))[["adj.r.squared"]]
 
 
 #*-------- 2) On teste l'effet de différentes variables climatiques à la place des variables année et altitude ---- 
 # On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
 
-# senes_Bpub = senes_Bpub[!is.na(senes_Bpub$debou10),]
-# mod_senes_Bpub_debou10 <- lmer(senes10 ~ debou10 + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F) 
-# # /!\ on ne peut pas comparer ce modèle avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
+# # /!\ on ne peut pas comparer le modèle avec débourrement avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
 # #     => on compare tous les modèles avec la DB sans NA dans debou10, si c'est moins bon on prend la DB globale sans considérer la variable debou10
-mod_senes_Bpub_P_summer <- lmer(senes10 ~ P_summer + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_Tmoy_GS <- lmer(senes10 ~ Tmoy_GS + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_Tmoy_MJ <- lmer(senes10 ~ Tmoy_MJ + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_Tmoy_AS <- lmer(senes10 ~ Tmoy_AS + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_Tmoy_ASO <- lmer(senes10 ~ Tmoy_ASO + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_Tnight21j_jsenes10 <- lmer(senes10 ~ Tnight21j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_Tnight30j_jsenes10 <- lmer(senes10 ~ Tnight30j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_Tnight40j_jsenes10 <- lmer(senes10 ~ Tnight40j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_GDDinv25_jsenes10 <- lmer(senes10 ~ GDDinv25_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_GDDinv20_jsenes10 <- lmer(senes10 ~ GDDinv20_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_GDDinv15_jsenes10 <- lmer(senes10 ~ GDDinv15_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
+senes10_Bpub_all = senes10_Bpub
+# ICI le timing de débourrement ne semble pas affecter la sénescence
+senes10_Bpub = senes10_Bpub_all# senes10_Bpub[!is.na(senes10_Bpub$debou10),] #senes10_Bpub_all
 
-AIC(#mod_senes_Bpub_debou10, 
-  mod_senes_Bpub_P_summer,mod_senes_Bpub_Tmoy_GS,mod_senes_Bpub_Tmoy_MJ,mod_senes_Bpub_Tmoy_AS,mod_senes_Bpub_Tmoy_ASO,
-  mod_senes_Bpub_Tnight21j_jsenes10,mod_senes_Bpub_Tnight30j_jsenes10,mod_senes_Bpub_Tnight40j_jsenes10,
-  mod_senes_Bpub_GDDinv25_jsenes10,mod_senes_Bpub_GDDinv20_jsenes10,mod_senes_Bpub_GDDinv15_jsenes10)
-# Les variables de GDDinverse à 25 et 20°C donnent les meilleurs résultats (AIC = 636.2224)... on regarde en version multivariables
+mod_senes10_Bpub_debou10 <- lmer(senes10 ~ debou10 + (1|ID_zone) + (1|yearQ), senes10_Bpub, REML=F) 
+mod_senes10_Bpub_P_summer <- lmer(senes10 ~ P_summer + (1|ID_zone) + (1|yearQ), senes10_Bpub, REML=F)
+mod_senes10_Bpub_Tmoy_GS <- lmer(senes10 ~ Tmoy_GS + (1|ID_zone) + (1|yearQ), senes10_Bpub, REML=F)
+mod_senes10_Bpub_Tmoy_MJ <- lmer(senes10 ~ Tmoy_MJ + (1|ID_zone) + (1|yearQ), senes10_Bpub, REML=F)
+mod_senes10_Bpub_Tmoy_AS <- lmer(senes10 ~ Tmoy_AS + (1|ID_zone) + (1|yearQ), senes10_Bpub, REML=F)
+mod_senes10_Bpub_Tmoy_ASO <- lmer(senes10 ~ Tmoy_ASO + (1|ID_zone) + (1|yearQ), senes10_Bpub, REML=F)
+mod_senes10_Bpub_Tnight21j_jsenes10 <- lmer(senes10 ~ Tnight21j_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Bpub, REML=F)
+mod_senes10_Bpub_Tnight30j_jsenes10 <- lmer(senes10 ~ Tnight30j_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Bpub, REML=F)
+mod_senes10_Bpub_Tnight40j_jsenes10 <- lmer(senes10 ~ Tnight40j_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Bpub, REML=F)
+mod_senes10_Bpub_GDDinv25_jsenes10 <- lmer(senes10 ~ GDDinv25_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Bpub, REML=F)
+mod_senes10_Bpub_GDDinv20_jsenes10 <- lmer(senes10 ~ GDDinv20_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Bpub, REML=F)
+mod_senes10_Bpub_GDDinv15_jsenes10 <- lmer(senes10 ~ GDDinv15_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Bpub, REML=F)
+
+AIC(mod_senes10_Bpub_debou10, 
+    mod_senes10_Bpub_P_summer,mod_senes10_Bpub_Tmoy_GS,mod_senes10_Bpub_Tmoy_MJ,mod_senes10_Bpub_Tmoy_AS,mod_senes10_Bpub_Tmoy_ASO,
+    mod_senes10_Bpub_Tnight21j_jsenes10,mod_senes10_Bpub_Tnight30j_jsenes10,mod_senes10_Bpub_Tnight40j_jsenes10,
+    mod_senes10_Bpub_GDDinv25_jsenes10,mod_senes10_Bpub_GDDinv20_jsenes10,mod_senes10_Bpub_GDDinv15_jsenes10)
+# Les variables de GDDinverse à 25 et 20°C donnent les meilleurs résultats (AIC = 646.6667)... on regarde en version multivariables
 
 
 # On peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
-summary(lmer(senes10 ~ P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
+summary(lmer(senes10 ~ debou10 + P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
                Tnight21j_jsenes10 + Tnight30j_jsenes10 + Tnight40j_jsenes10 +
                GDDinv25_jsenes10 + GDDinv20_jsenes10 + GDDinv15_jsenes10 +
-               (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F), corr=F)
+               (1|ID_zone) + (1|yearQ), senes10_Bpub, REML=F), corr=F) # /!\ en intégrant debou10 on divise le jeu de données par 2 ! (de 80 à 40 points)
 # On enlève les variables une par une (en fonction des pvalues), et on regarde également l'AIC 
 # En combinant ces 2 critères (AIC et significativité des effets), on retient donc :
-mod_senes_Bpub_multivar = lmer(senes10 ~ P_summer + GDDinv25_jsenes10 + 
-                                 (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F) # AIC = 634.9
-# visreg(mod_senes_Bpub_multivar, "GDDinv25_jsenes10")
+mod_senes10_Bpub_multivar = lmer(senes10 ~ GDDinv25_jsenes10 + 
+                                 (1|ID_zone) + (1|yearQ), senes10_Bpub, REML=F) # AIC = 615.6
+# visreg(mod_senes10_Bpub_multivar, "GDDinv25_jsenes10")
 
 # On peut aussi complexifier en ajoutant des interactions :
-mod_senes_Bpub_multivar = lmer(senes10 ~ P_summer * GDDinv25_jsenes10 + 
-                                 (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F) # AIC = 631.4
-# visreg(mod_senes_Bpub_multivar, "GDDinv25_jsenes10", by="P_summer")
-visreg(mod_senes_Bpub_multivar, "P_summer", by="GDDinv25_jsenes10")
+mod_senes10_Bpub_multivar = lmer(senes10 ~ P_summer * GDDinv25_jsenes10 + 
+                                 (1|ID_zone) + (1|yearQ), senes10_Bpub, REML=F) # AIC = 611.2
+# visreg(mod_senes10_Bpub_multivar, "GDDinv25_jsenes10", by="P_summer")
+visreg(mod_senes10_Bpub_multivar, "P_summer", by="GDDinv25_jsenes10")
 
 
 #*-------- 3) On complexifie le modèle ---- 
@@ -635,100 +848,126 @@ visreg(mod_senes_Bpub_multivar, "P_summer", by="GDDinv25_jsenes10")
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-bestmod_senes_Bpub = lmer(senes10 ~ P_summer * GDDinv25_jsenes10 + altitude +
-                            (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F) # AIC = 627.1
-bestmods = c(list("Bouleau_pubescent"=bestmod_senes_Bpub), bestmods)
-visreg(bestmod_senes_Bpub, "P_summer", by="GDDinv25_jsenes10")
-visreg(bestmod_senes_Bpub, "GDDinv25_jsenes10", by="P_summer")
+bestmod_senes10_Bpub = lmer(senes10 ~ P_summer * GDDinv25_jsenes10 + altitude +
+                            (1|ID_zone) + (1|yearQ), senes10_Bpub, REML=F) # AIC = 606.6
+bestmods = c(list("Bouleau_pubescent"=bestmod_senes10_Bpub), bestmods)
+visreg(bestmod_senes10_Bpub, "P_summer", by="GDDinv25_jsenes10")
+visreg(bestmod_senes10_Bpub, "GDDinv25_jsenes10", by="P_summer")
 
 
-summary(bestmod_senes_Bpub)
+summary(bestmod_senes10_Bpub)
 # gradient altitudinal : sénescence 2.0 jours plus tôt quand on monte de 100m
-# précipitations : sénescence 5.8 jour plus tôt quand on gagne 1mm de pluie
-# accumulation de "froid" : sénescence 6.3 jours plus tôt quand on gagne 1°C de froid (précocité d'autant plus forte qu'il fait sec)
+# précipitations : sénescence 5.8 jours plus tôt quand on gagne 1mm de pluie
+# accumulation de "froid" : sénescence 6.2 jours plus tôt quand on gagne 1°C de froid (précocité d'autant plus forte qu'il fait sec)
 
-qqnorm(resid(bestmod_senes_Bpub))
-qqline(resid(bestmod_senes_Bpub))
+qqnorm(resid(bestmod_senes10_Bpub))
+qqline(resid(bestmod_senes10_Bpub))
 # résidus pas oufs !
 
 
 # Effets fixes VS tous les effets inclus
-R2_models[R2_models$species == "Bouleau_pubescent", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes_Bpub)
-
-# Part de variance expliquée par les différentes variables
-calcVarPart(bestmod_senes_Bpub)
+R2_models[R2_models$species == "Bouleau_pubescent", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes10_Bpub)
+# R2 des effets fixes très très nul !!
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_senes10_Bpub)
+# - Validation croisée
+n = nrow(senes10_Bpub)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes10_Bpub[trainIndex ,]
+test <- senes10_Bpub[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes10_Bpub$ID_zone[drop=T])[!unique(senes10_Bpub$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(bestmod_senes10_Bpub), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Bouleau_pubescent", "R2_bestmod_calibval"] = summary(lm(predictions~senes10, test2))[["adj.r.squared"]]
 
 
 resultats = rbind(resultats, data.frame(species = "Bouleau_pubescent",
-                                        variable = rownames(coef(summary(bestmod_senes_Bpub))),
-                                        coef = coef(summary(bestmod_senes_Bpub))[,1],
-                                        std = coef(summary(bestmod_senes_Bpub))[,2],
-                                        pval = coef(summary(bestmod_senes_Bpub))[,5],
-                                        varexpli = calcVarPart(bestmod_senes_Bpub)[rownames(coef(summary(bestmod_senes_Bpub)))]))
+                                        variable = rownames(coef(summary(bestmod_senes10_Bpub))),
+                                        coef = coef(summary(bestmod_senes10_Bpub))[,1],
+                                        std = coef(summary(bestmod_senes10_Bpub))[,2],
+                                        pval = coef(summary(bestmod_senes10_Bpub))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_senes10_Bpub)[rownames(coef(summary(bestmod_senes10_Bpub)))], error = function(e) return(NA))))
 
 
 
 ##############################################-
 #*---- Hetre ----
 
-senes_Fsyl = senes_Alps[senes_Alps$species == "Hetre",]
-# ggplot(senes_Fsyl, aes(x=year)) + geom_histogram(binwidth=1) 
+senes10_Fsyl = senes10_Alps[senes10_Alps$species == "Hetre",]
+# ggplot(senes10_Fsyl, aes(x=year)) + geom_histogram(binwidth=1) 
 # # on retire les lignes où on n'a pas de données de température (2005)
-senes_Fsyl = senes_Fsyl[!is.na(senes_Fsyl$Tmoy_GS),]
+senes10_Fsyl = senes10_Fsyl[!is.na(senes10_Fsyl$Tmoy_GS),]
+ggplot(senes10_Fsyl, aes(x=senes10)) + geom_histogram(binwidth=5)
 
 
 #*-------- 1) On regarde un modèle simple comme dans Bison et al. 2019, avec seulement altitude et année ---- 
-mod_senes_Fsyl_Altyear <- lmer(senes10 ~ altitude + year + (year|nom_zone), senes_Fsyl, REML=F)
-summary(mod_senes_Fsyl_Altyear)
+mod_senes10_Fsyl_Altyear <- lmer(senes10 ~ altitude + year + (year|ID_zone), senes10_Fsyl, REML=F)
+summary(mod_senes10_Fsyl_Altyear)
 
 # On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
-R2_models[R2_models$species == "Hetre", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes_Fsyl_Altyear)
+R2_models[R2_models$species == "Hetre", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes10_Fsyl_Altyear)
+# + Validation croisée
+n = nrow(senes10_Fsyl)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes10_Fsyl[trainIndex ,]
+test <- senes10_Fsyl[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes10_Fsyl$ID_zone[drop=T])[!unique(senes10_Fsyl$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_senes10_Fsyl_Altyear), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Hetre", "R2_altyear_calibval"] = summary(lm(predictions~senes10, test2))[["adj.r.squared"]]
 
 
 #*-------- 2) On teste l'effet de différentes variables climatiques à la place des variables année et altitude ---- 
 # On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
 
-# senes_Fsyl = senes_Fsyl[!is.na(senes_Fsyl$debou10),]
-# mod_senes_Fsyl_debou10 <- lmer(senes10 ~ debou10 + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-# # /!\ on ne peut pas comparer ce modèle avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
+# # /!\ on ne peut pas comparer le modèle avec débourrement avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
 # #     => on compare tous les modèles avec la DB sans NA dans debou10, si c'est moins bon on prend la DB globale sans considérer la variable debou10
-mod_senes_Fsyl_P_summer <- lmer(senes10 ~ P_summer + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_Tmoy_GS <- lmer(senes10 ~ Tmoy_GS + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_Tmoy_MJ <- lmer(senes10 ~ Tmoy_MJ + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_Tmoy_AS <- lmer(senes10 ~ Tmoy_AS + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_Tmoy_ASO <- lmer(senes10 ~ Tmoy_ASO + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_Tnight21j_jsenes10 <- lmer(senes10 ~ Tnight21j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_Tnight30j_jsenes10 <- lmer(senes10 ~ Tnight30j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_Tnight40j_jsenes10 <- lmer(senes10 ~ Tnight40j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_GDDinv25_jsenes10 <- lmer(senes10 ~ GDDinv25_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_GDDinv20_jsenes10 <- lmer(senes10 ~ GDDinv20_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_GDDinv15_jsenes10 <- lmer(senes10 ~ GDDinv15_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
+senes10_Fsyl_all = senes10_Fsyl
+# ICI le timing de débourrement ne semble pas affecter la sénescence
+senes10_Fsyl = senes10_Fsyl_all# senes10_Fsyl[!is.na(senes10_Fsyl$debou10),] #senes10_Fsyl_all
 
-AIC(#mod_senes_Fsyl_debou10, 
-  mod_senes_Fsyl_P_summer,mod_senes_Fsyl_Tmoy_GS,mod_senes_Fsyl_Tmoy_MJ,mod_senes_Fsyl_Tmoy_AS,mod_senes_Fsyl_Tmoy_ASO,
-  mod_senes_Fsyl_Tnight21j_jsenes10,mod_senes_Fsyl_Tnight30j_jsenes10,mod_senes_Fsyl_Tnight40j_jsenes10,
-  mod_senes_Fsyl_GDDinv25_jsenes10,mod_senes_Fsyl_GDDinv20_jsenes10,mod_senes_Fsyl_GDDinv15_jsenes10)
-# Les variables de température estivales donnent les meilleurs résultats (AIC = 528.2573)... on regarde en version multivariables
+mod_senes10_Fsyl_debou10 <- lmer(senes10 ~ debou10 + (1|ID_zone) + (1|yearQ), senes10_Fsyl, REML=F) 
+mod_senes10_Fsyl_P_summer <- lmer(senes10 ~ P_summer + (1|ID_zone) + (1|yearQ), senes10_Fsyl, REML=F)
+mod_senes10_Fsyl_Tmoy_GS <- lmer(senes10 ~ Tmoy_GS + (1|ID_zone) + (1|yearQ), senes10_Fsyl, REML=F)
+mod_senes10_Fsyl_Tmoy_MJ <- lmer(senes10 ~ Tmoy_MJ + (1|ID_zone) + (1|yearQ), senes10_Fsyl, REML=F)
+mod_senes10_Fsyl_Tmoy_AS <- lmer(senes10 ~ Tmoy_AS + (1|ID_zone) + (1|yearQ), senes10_Fsyl, REML=F)
+mod_senes10_Fsyl_Tmoy_ASO <- lmer(senes10 ~ Tmoy_ASO + (1|ID_zone) + (1|yearQ), senes10_Fsyl, REML=F)
+mod_senes10_Fsyl_Tnight21j_jsenes10 <- lmer(senes10 ~ Tnight21j_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Fsyl, REML=F)
+mod_senes10_Fsyl_Tnight30j_jsenes10 <- lmer(senes10 ~ Tnight30j_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Fsyl, REML=F)
+mod_senes10_Fsyl_Tnight40j_jsenes10 <- lmer(senes10 ~ Tnight40j_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Fsyl, REML=F)
+mod_senes10_Fsyl_GDDinv25_jsenes10 <- lmer(senes10 ~ GDDinv25_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Fsyl, REML=F)
+mod_senes10_Fsyl_GDDinv20_jsenes10 <- lmer(senes10 ~ GDDinv20_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Fsyl, REML=F)
+mod_senes10_Fsyl_GDDinv15_jsenes10 <- lmer(senes10 ~ GDDinv15_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Fsyl, REML=F)
+
+AIC(mod_senes10_Fsyl_debou10, 
+    mod_senes10_Fsyl_P_summer,mod_senes10_Fsyl_Tmoy_GS,mod_senes10_Fsyl_Tmoy_MJ,mod_senes10_Fsyl_Tmoy_AS,mod_senes10_Fsyl_Tmoy_ASO,
+    mod_senes10_Fsyl_Tnight21j_jsenes10,mod_senes10_Fsyl_Tnight30j_jsenes10,mod_senes10_Fsyl_Tnight40j_jsenes10,
+    mod_senes10_Fsyl_GDDinv25_jsenes10,mod_senes10_Fsyl_GDDinv20_jsenes10,mod_senes10_Fsyl_GDDinv15_jsenes10)
+# Les variables de température estivales donnent les meilleurs résultats (AIC = 528...)... on regarde en version multivariables
 
 
 # On peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
 summary(lmer(senes10 ~ P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
                Tnight21j_jsenes10 + Tnight30j_jsenes10 + Tnight40j_jsenes10 +
                GDDinv25_jsenes10 + GDDinv20_jsenes10 + GDDinv15_jsenes10 +
-               (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F), corr=F)
+               (1|ID_zone) + (1|yearQ), senes10_Fsyl, REML=F), corr=F)
 # On enlève les variables une par une (en fonction des pvalues), et on regarde également l'AIC 
 # En combinant ces 2 critères (AIC et significativité des effets), on retient donc :
-mod_senes_Fsyl_multivar = lmer(senes10 ~ P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_ASO + 
+mod_senes10_Fsyl_multivar = lmer(senes10 ~ P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_ASO + 
                                  Tnight21j_jsenes10 + 
                                  GDDinv25_jsenes10 +
-                                 (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F) # AIC = 526.6
-# visreg(mod_senes_Fsyl_multivar, "GDDinv25_jsenes10")
+                                 (1|ID_zone) + (1|yearQ), senes10_Fsyl, REML=F) # AIC = 486.3
+# visreg(mod_senes10_Fsyl_multivar, "GDDinv25_jsenes10")
 
 # On peut aussi complexifier en ajoutant des interactions :
-mod_senes_Fsyl_multivar = lmer(senes10 ~ P_summer * Tmoy_AS + 
-                                 (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F) # AIC = 522.1
-# visreg(mod_senes_Fsyl_multivar, "Tmoy_AS", by="P_summer")
-# visreg(mod_senes_Fsyl_multivar, "P_summer", by="Tmoy_AS")
+mod_senes10_Fsyl_multivar = lmer(senes10 ~ P_summer * Tmoy_AS + 
+                                 (1|ID_zone) + (1|yearQ), senes10_Fsyl, REML=F) # AIC = 481.9
+# visreg(mod_senes10_Fsyl_multivar, "Tmoy_AS", by="P_summer")
+# visreg(mod_senes10_Fsyl_multivar, "P_summer", by="Tmoy_AS")
 
 
 #*-------- 3) On complexifie le modèle ---- 
@@ -736,95 +975,122 @@ mod_senes_Fsyl_multivar = lmer(senes10 ~ P_summer * Tmoy_AS +
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-bestmod_senes_Fsyl = lmer(senes10 ~ P_summer * Tmoy_AS + 
-                            (1|nom_zone) + (P_summer|yearQ), senes_Fsyl, REML=F) # AIC = 520.1
-bestmods = c(list("Hetre"=bestmod_senes_Fsyl), bestmods)
-# visreg(bestmod_senes_Fsyl, "P_summer", by="Tmoy_AS")
-# visreg(bestmod_senes_Fsyl, "Tmoy_AS", by="P_summer")
+bestmod_senes10_Fsyl = lmer(senes10 ~ P_summer * Tmoy_AS + 
+                            (1|ID_zone) + (1|yearQ), senes10_Fsyl, REML=F) # AIC = 481.9
+bestmods = c(list("Hetre"=bestmod_senes10_Fsyl), bestmods)
+# visreg(bestmod_senes10_Fsyl, "P_summer", by="Tmoy_AS")
+# visreg(bestmod_senes10_Fsyl, "Tmoy_AS", by="P_summer")
 
 
-summary(bestmod_senes_Fsyl)
+summary(bestmod_senes10_Fsyl)
 # précipitations : sénescence 28 jours plus tôt quand on gagne 1mm de pluie
-# chaleur de fin de saison (août-septembre) : sénescence 20 jours plus tard quand on gagne 1°C (retard d'autant plus fort qu'il fait sec)
+# chaleur de fin de saison (août-septembre) : sénescence 18 jours plus tard quand on gagne 1°C (retard d'autant plus fort qu'il fait sec)
+# /!\ ça me semble beaucoup ces chiffres !!!
 
-qqnorm(resid(bestmod_senes_Fsyl))
-qqline(resid(bestmod_senes_Fsyl))
+qqnorm(resid(bestmod_senes10_Fsyl))
+qqline(resid(bestmod_senes10_Fsyl))
 # résidus pas oufs !
 
 
 # Effets fixes VS tous les effets inclus
-R2_models[R2_models$species == "Hetre", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes_Fsyl)
-
-# Part de variance expliquée par les différentes variables
-calcVarPart(bestmod_senes_Fsyl)
+R2_models[R2_models$species == "Hetre", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes10_Fsyl)
+# R2 des effets fixes très très nul !!
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_senes10_Fsyl)
+# - Validation croisée
+n = nrow(senes10_Fsyl)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes10_Fsyl[trainIndex ,]
+test <- senes10_Fsyl[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes10_Fsyl$ID_zone[drop=T])[!unique(senes10_Fsyl$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(bestmod_senes10_Fsyl), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+# # R2 ajusté = 0.7489
+R2_models[R2_models$species == "Hetre", "R2_bestmod_calibval"] = summary(lm(predictions~senes10, test2))[["adj.r.squared"]]
 
 
 resultats = rbind(resultats, data.frame(species = "Hetre",
-                                        variable = rownames(coef(summary(bestmod_senes_Fsyl))),
-                                        coef = coef(summary(bestmod_senes_Fsyl))[,1],
-                                        std = coef(summary(bestmod_senes_Fsyl))[,2],
-                                        pval = coef(summary(bestmod_senes_Fsyl))[,5],
-                                        varexpli = calcVarPart(bestmod_senes_Fsyl)[rownames(coef(summary(bestmod_senes_Fsyl)))]))
+                                        variable = rownames(coef(summary(bestmod_senes10_Fsyl))),
+                                        coef = coef(summary(bestmod_senes10_Fsyl))[,1],
+                                        std = coef(summary(bestmod_senes10_Fsyl))[,2],
+                                        pval = coef(summary(bestmod_senes10_Fsyl))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_senes10_Fsyl)[rownames(coef(summary(bestmod_senes10_Fsyl)))], error = function(e) return(NA))))
 
 
 
 ##############################################-
 #*---- Sorbier ----
 
-senes_Sacu = senes_Alps[senes_Alps$species == "Sorbier",]
-# ggplot(senes_Sacu, aes(x=year)) + geom_histogram(binwidth=1) 
+senes10_Sacu = senes10_Alps[senes10_Alps$species == "Sorbier",]
+# ggplot(senes10_Sacu, aes(x=year)) + geom_histogram(binwidth=1) 
 # # on retire les lignes où on n'a pas de données de température (2005)
-senes_Sacu = senes_Sacu[!is.na(senes_Sacu$Tmoy_GS),]
-# hist(senes_Sacu$senes10)
+senes10_Sacu = senes10_Sacu[!is.na(senes10_Sacu$Tmoy_GS),]
+ggplot(senes10_Sacu, aes(x=senes10)) + geom_histogram(binwidth=5)
 
 #*-------- 1) On regarde un modèle simple comme dans Bison et al. 2019, avec seulement altitude et année ---- 
-mod_senes_Sacu_Altyear <- lmer(senes10 ~ altitude + year + (year|nom_zone), senes_Sacu, REML=F)
-summary(mod_senes_Sacu_Altyear)
+mod_senes10_Sacu_Altyear <- lmer(senes10 ~ altitude + year + (year|ID_zone), senes10_Sacu, REML=F)
+summary(mod_senes10_Sacu_Altyear)
 
 # On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
-R2_models[R2_models$species == "Sorbier", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes_Sacu_Altyear)
+R2_models[R2_models$species == "Sorbier", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes10_Sacu_Altyear)
+# + Validation croisée
+n = nrow(senes10_Sacu)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes10_Sacu[trainIndex ,]
+test <- senes10_Sacu[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes10_Sacu$ID_zone[drop=T])[!unique(senes10_Sacu$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_senes10_Sacu_Altyear), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Sorbier", "R2_altyear_calibval"] = summary(lm(predictions~senes10, test2))[["adj.r.squared"]]
 
 
 #*-------- 2) On teste l'effet de différentes variables climatiques à la place des variables année et altitude ---- 
 # On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
 
-# senes_Sacu = senes_Sacu[!is.na(senes_Sacu$debou10),]
-# mod_senes_Sacu_debou10 <- lmer(senes10 ~ debou10 + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-# # /!\ on ne peut pas comparer ce modèle avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
+# # /!\ on ne peut pas comparer le modèle avec débourrement avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
 # #     => on compare tous les modèles avec la DB sans NA dans debou10, si c'est moins bon on prend la DB globale sans considérer la variable debou10
-mod_senes_Sacu_P_summer <- lmer(senes10 ~ P_summer + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_Tmoy_GS <- lmer(senes10 ~ Tmoy_GS + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_Tmoy_MJ <- lmer(senes10 ~ Tmoy_MJ + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_Tmoy_AS <- lmer(senes10 ~ Tmoy_AS + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_Tmoy_ASO <- lmer(senes10 ~ Tmoy_ASO + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_Tnight21j_jsenes10 <- lmer(senes10 ~ Tnight21j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_Tnight30j_jsenes10 <- lmer(senes10 ~ Tnight30j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_Tnight40j_jsenes10 <- lmer(senes10 ~ Tnight40j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_GDDinv25_jsenes10 <- lmer(senes10 ~ GDDinv25_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_GDDinv20_jsenes10 <- lmer(senes10 ~ GDDinv20_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_GDDinv15_jsenes10 <- lmer(senes10 ~ GDDinv15_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
+senes10_Sacu_all = senes10_Sacu
+# ICI le timing de débourrement ne semble pas affecter la sénescence
+senes10_Sacu = senes10_Sacu_all# senes10_Sacu[!is.na(senes10_Sacu$debou10),] #senes10_Sacu_all
 
-AIC(#mod_senes_Sacu_debou10, 
-  mod_senes_Sacu_P_summer,mod_senes_Sacu_Tmoy_GS,mod_senes_Sacu_Tmoy_MJ,mod_senes_Sacu_Tmoy_AS,mod_senes_Sacu_Tmoy_ASO,
-  mod_senes_Sacu_Tnight21j_jsenes10,mod_senes_Sacu_Tnight30j_jsenes10,mod_senes_Sacu_Tnight40j_jsenes10,
-  mod_senes_Sacu_GDDinv25_jsenes10,mod_senes_Sacu_GDDinv20_jsenes10,mod_senes_Sacu_GDDinv15_jsenes10)
+mod_senes10_Sacu_debou10 <- lmer(senes10 ~ debou10 + (1|ID_zone) + (1|yearQ), senes10_Sacu, REML=F) 
+mod_senes10_Sacu_P_summer <- lmer(senes10 ~ P_summer + (1|ID_zone) + (1|yearQ), senes10_Sacu, REML=F)
+mod_senes10_Sacu_Tmoy_GS <- lmer(senes10 ~ Tmoy_GS + (1|ID_zone) + (1|yearQ), senes10_Sacu, REML=F)
+mod_senes10_Sacu_Tmoy_MJ <- lmer(senes10 ~ Tmoy_MJ + (1|ID_zone) + (1|yearQ), senes10_Sacu, REML=F)
+mod_senes10_Sacu_Tmoy_AS <- lmer(senes10 ~ Tmoy_AS + (1|ID_zone) + (1|yearQ), senes10_Sacu, REML=F)
+mod_senes10_Sacu_Tmoy_ASO <- lmer(senes10 ~ Tmoy_ASO + (1|ID_zone) + (1|yearQ), senes10_Sacu, REML=F)
+mod_senes10_Sacu_Tnight21j_jsenes10 <- lmer(senes10 ~ Tnight21j_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Sacu, REML=F)
+mod_senes10_Sacu_Tnight30j_jsenes10 <- lmer(senes10 ~ Tnight30j_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Sacu, REML=F)
+mod_senes10_Sacu_Tnight40j_jsenes10 <- lmer(senes10 ~ Tnight40j_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Sacu, REML=F)
+mod_senes10_Sacu_GDDinv25_jsenes10 <- lmer(senes10 ~ GDDinv25_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Sacu, REML=F)
+mod_senes10_Sacu_GDDinv20_jsenes10 <- lmer(senes10 ~ GDDinv20_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Sacu, REML=F)
+mod_senes10_Sacu_GDDinv15_jsenes10 <- lmer(senes10 ~ GDDinv15_jsenes10 + (1|ID_zone) + (1|yearQ), senes10_Sacu, REML=F)
+
+AIC(mod_senes10_Sacu_debou10, 
+    mod_senes10_Sacu_P_summer,mod_senes10_Sacu_Tmoy_GS,mod_senes10_Sacu_Tmoy_MJ,mod_senes10_Sacu_Tmoy_AS,mod_senes10_Sacu_Tmoy_ASO,
+    mod_senes10_Sacu_Tnight21j_jsenes10,mod_senes10_Sacu_Tnight30j_jsenes10,mod_senes10_Sacu_Tnight40j_jsenes10,
+    mod_senes10_Sacu_GDDinv25_jsenes10,mod_senes10_Sacu_GDDinv20_jsenes10,mod_senes10_Sacu_GDDinv15_jsenes10)
 # Les variables de température nocturne donnent les meilleurs résultats (AIC = 4940.168)...
 # ... ainsi que la variable de débourrement !
 # on regarde en version multivariables
 
 
 # On peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
-summary(lmer(senes10 ~ P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
+summary(lmer(senes10 ~ debou10 + P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
                Tnight21j_jsenes10 + Tnight30j_jsenes10 + Tnight40j_jsenes10 +
                GDDinv25_jsenes10 + GDDinv20_jsenes10 + GDDinv15_jsenes10 +
-               (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F), corr=F)
+               (1|ID_zone) + (1|yearQ), senes10_Sacu, REML=F), corr=F)
 # On enlève les variables une par une (en fonction des pvalues), et on regarde également l'AIC 
 # En combinant ces 2 critères (AIC et significativité des effets), on retient donc :
-mod_senes_Sacu_multivar = lmer(senes10 ~ debou10 + 
+mod_senes10_Sacu_multivar = lmer(senes10 ~ debou10 + 
                                  Tnight21j_jsenes10 + 
                                  GDDinv25_jsenes10 +
-                                 (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F) # AIC = 4057.1 # /!\ en ayant ajouté debou10, on tronque la base de données de 20% !
-# visreg(mod_senes_Sacu_multivar, "GDDinv25_jsenes10")
+                                 (1|ID_zone) + (1|yearQ), senes10_Sacu, REML=F) # AIC = 4035.9 # /!\ en ayant ajouté debou10, on tronque la base de données de 20% !
+# visreg(mod_senes10_Sacu_multivar, "GDDinv25_jsenes10")
 
 # On peut aussi complexifier en ajoutant des interactions (ici ça n'améliore rien) 
 
@@ -834,44 +1100,722 @@ mod_senes_Sacu_multivar = lmer(senes10 ~ debou10 +
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-bestmod_senes_Sacu = lmer(senes10 ~ debou10 + 
+bestmod_senes10_Sacu = lmer(senes10 ~ debou10 + 
                             Tnight21j_jsenes10 + 
                             GDDinv25_jsenes10 +
-                            (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F) # AIC = 4057.1
-# Ici l'altitude n'améliore rien, et l'interaction température/année via l'effet aléatoire ne permet plus au modèle de converger
-bestmods = c(list("Sorbier"=bestmod_senes_Sacu), bestmods)
-# visreg(bestmod_senes_Sacu, "P_summer", by="Tmoy_AS")
-# visreg(bestmod_senes_Sacu, "Tmoy_AS", by="P_summer")
+                            (1|ID_zone) + (1|yearQ), senes10_Sacu, REML=F) # AIC = 4035.9
+# Ici l'altitude n'améliore rien, MAIS en mettant la date de débourrement en variable explicative on tronque la base de données
+bestmods = c(list("Sorbier"=bestmod_senes10_Sacu), bestmods)
+# visreg(bestmod_senes10_Sacu, "P_summer", by="Tmoy_AS")
+# visreg(bestmod_senes10_Sacu, "Tmoy_AS", by="P_summer")
 
 
-summary(bestmod_senes_Sacu)
-# températures nocturnes un peu avant la sénescence : sénescence 1.6 jours plus tard quand on gagne 1°C en moyenne la nuit
+summary(bestmod_senes10_Sacu)
+# températures nocturnes un peu avant la sénescence : sénescence 1.5 jours plus tard quand on gagne 1°C en moyenne la nuit
 # accumulation de froid (pas vraiment significatif !) : sénescence 1.0 jour plus tard quand on gagne 1°C de froid
+# quand le débourrement est plus tardif d'une semaine, la sénescence est retardée d'1 jour seulement
 
-qqnorm(resid(bestmod_senes_Sacu))
-qqline(resid(bestmod_senes_Sacu))
-# résidus ok !
+qqnorm(resid(bestmod_senes10_Sacu))
+qqline(resid(bestmod_senes10_Sacu))
+# résidus quasi ok !
 
 
 # Effets fixes VS tous les effets inclus
-R2_models[R2_models$species == "Sorbier", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes_Sacu)
+R2_models[R2_models$species == "Sorbier", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes10_Sacu)
+# R2 des effets fixes très très nul !!
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_senes10_Sacu)
+# - Validation croisée
+n = nrow(senes10_Sacu)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes10_Sacu[trainIndex ,]
+test <- senes10_Sacu[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes10_Sacu$ID_zone[drop=T])[!unique(senes10_Sacu$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(bestmod_senes10_Sacu), train)
+predictions <- mod_train %>% predict(test1) # BUG !!!
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Sorbier", "R2_bestmod_calibval"] = summary(lm(predictions~senes10, test2))[["adj.r.squared"]]
 
-# Part de variance expliquée par les différentes variables
-calcVarPart(bestmod_senes_Sacu)
 
 
 resultats = rbind(resultats, data.frame(species = "Sorbier",
-                                        variable = rownames(coef(summary(bestmod_senes_Sacu))),
-                                        coef = coef(summary(bestmod_senes_Sacu))[,1],
-                                        std = coef(summary(bestmod_senes_Sacu))[,2],
-                                        pval = coef(summary(bestmod_senes_Sacu))[,5],
-                                        varexpli = calcVarPart(bestmod_senes_Sacu)[rownames(coef(summary(bestmod_senes_Sacu)))]))
+                                        variable = rownames(coef(summary(bestmod_senes10_Sacu))),
+                                        coef = coef(summary(bestmod_senes10_Sacu))[,1],
+                                        std = coef(summary(bestmod_senes10_Sacu))[,2],
+                                        pval = coef(summary(bestmod_senes10_Sacu))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_senes10_Sacu)[rownames(coef(summary(bestmod_senes10_Sacu)))], error = function(e) return(NA))))
 
 
 
 write.csv(resultats[-1,], "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resultats_modeles_senes10__coeff.csv", row.names = F)
 write.csv(R2_models[!is.na(R2_models$R2_bestmod_fixef),], "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resultats_modeles_senes10__R2.csv", row.names = F)
 save(bestmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/bestmods_senes10.Rdata")
+save(altyearmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/mods_senes10_v1altyear.Rdata")
+
+
+
+
+##############################################-
+# *-- 50% DE SÉNESCENCE                  ----
+##############################################-
+
+senes50_Alps = senes_Alps_all[!is.na(senes_Alps_all$senes50),]
+
+# # Aperçu des données de sénescence
+# ggplot(senes50_Alps[!is.na(senes50_Alps$Tmoy_GS),], aes(x=altitude, y=senes50, col=species)) + geom_point() +
+#   theme(legend.position = "none") + facet_wrap(.~year) + geom_smooth(method=lm) + ylim(200,325)
+# ggplot(senes50_Alps[!is.na(senes50_Alps$Tmoy_GS),], aes(x=Tmoy_GS, y=senes50, col=species)) + geom_point() +
+#   theme(legend.position = "none") + facet_wrap(.~year) + geom_smooth(method=lm) + ylim(200,325)
+# ggplot(senes50_Alps[!is.na(senes50_Alps$Tmoy_GS),], aes(x=Tmoy_GS, y=senes50, col=yearQ)) + geom_point() +
+#   theme(legend.position = "none") + facet_wrap(.~species) + geom_smooth(method=lm) + ylim(200,325)
+# ggplot(senes50_Alps[!is.na(senes50_Alps$Tmoy_GS),], aes(x=GDDinv20_jsenes50, y=senes50, col=yearQ)) + geom_point() +
+#   theme(legend.position = "none") + facet_wrap(.~species) + geom_smooth(method=lm) + ylim(200,325)
+# ggplot(senes50_Alps[!is.na(senes50_Alps$Tmoy_GS),], aes(x=P_summer, y=senes50)) + geom_point() +
+#   theme(legend.position = "none") + facet_wrap(.~species) + geom_smooth(method=lm) + ylim(200,325)
+# ggplot(senes50_Alps[!is.na(senes50_Alps$Tmoy_GS),], aes(x=debou10, y=senes50)) + geom_point() +
+#   theme(legend.position = "none") + facet_wrap(.~species) + geom_smooth(method=lm) + ylim(200,325)
+
+
+
+# Initialisation d'un tableau de résultat (coefficients du meilleur modèle pour chaque espèce)
+# (RQ : pour le débourrement, on avait comparé les résultats sur les périodes 2006-2016 et 2006-2024, en lien avec le papier de Bison et al 2019. Pour 
+#       le changement de couleur des feuilles, on ne regarde pas cet aspect (dans un premier temps))
+resultats = data.frame(species = NA, variable = NA, coef = NA, std=NA, pval=NA, varexpli=NA)
+
+# Initialisation d'un tableau pour comparer l'intérêt d'avoir des modèles intégrant la température, par rapport aux modèles avec année et altitude
+R2_models = data.frame(species = unique(senes50_Alps$species), 
+                       R2_altyear_fixef = NA, R2_altyear_allef = NA, R2_altyear_calibval = NA, 
+                       R2_bestmod_fixef = NA, R2_bestmod_allef = NA, R2_bestmod_calibval = NA)
+
+# Initialisation d'une liste avec tous les meilleurs modèles
+bestmods = list()
+altyearmods = list()
+
+
+##############################################-
+#*---- Bouleau verruqueux ----
+
+senes50_Bpen = senes50_Alps[senes50_Alps$species == "Bouleau_verruqueux",]
+# # on retire les lignes où on n'a pas de données de température (2005)
+senes50_Bpen = senes50_Bpen[!is.na(senes50_Bpen$Tmoy_GS),]
+ggplot(senes50_Bpen, aes(x=senes50)) + geom_histogram(binwidth=5)
+# On retire une valeur extrême (sénescence notée à 75jours = 15/03 !)
+senes50_Bpen = senes50_Bpen[senes50_Bpen$senes50 > 100,]
+# ggplot(senes50_Bpen, aes(x=year, y=julian_day)) + geom_point() + geom_smooth(method=lm) + labs(title = "Changement de couleur 10% - Bouleau", x="année",y="jour julien")
+
+#*-------- 1) On regarde un modèle simple comme dans Bison et al. 2019, avec seulement altitude et année ---- 
+mod_senes50_Bpen_Altyear <- lmer(senes50 ~ altitude + year + (year|ID_zone), senes50_Bpen, REML=F)
+summary(mod_senes50_Bpen_Altyear)
+altyearmods = c(list("Bouleau_verruqueux"=mod_senes50_Bpen_Altyear), altyearmods)
+
+# On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
+R2_models[R2_models$species == "Bouleau_verruqueux", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes50_Bpen_Altyear)
+# + Validation croisée
+n = nrow(senes50_Bpen)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes50_Bpen[trainIndex ,]
+test <- senes50_Bpen[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes50_Bpen$ID_zone[drop=T])[!unique(senes50_Bpen$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_senes50_Bpen_Altyear), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Bouleau_verruqueux", "R2_altyear_calibval"] = summary(lm(predictions~senes50, test2))[["adj.r.squared"]]
+
+
+#*-------- 2) On teste l'effet de différentes variables climatiques à la place des variables année et altitude ---- 
+# On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
+
+# # /!\ on ne peut pas comparer le modèle avec débourrement avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
+# #     => on compare tous les modèles avec la DB sans NA dans debou10, si c'est moins bon on prend la DB globale sans considérer la variable debou10
+senes50_Bpen_all = senes50_Bpen
+# ICI le timing de débourrement ne semble pas affecter la sénescence
+senes50_Bpen = senes50_Bpen_all# senes50_Bpen[!is.na(senes50_Bpen$debou10),] #senes50_Bpen_all
+
+mod_senes50_Bpen_debou10 <- lmer(senes50 ~ debou10 + (1|ID_zone) + (1|yearQ), senes50_Bpen, REML=F) 
+mod_senes50_Bpen_P_summer <- lmer(senes50 ~ P_summer + (1|ID_zone) + (1|yearQ), senes50_Bpen, REML=F)
+mod_senes50_Bpen_Tmoy_GS <- lmer(senes50 ~ Tmoy_GS + (1|ID_zone) + (1|yearQ), senes50_Bpen, REML=F)
+mod_senes50_Bpen_Tmoy_MJ <- lmer(senes50 ~ Tmoy_MJ + (1|ID_zone) + (1|yearQ), senes50_Bpen, REML=F)
+mod_senes50_Bpen_Tmoy_AS <- lmer(senes50 ~ Tmoy_AS + (1|ID_zone) + (1|yearQ), senes50_Bpen, REML=F)
+mod_senes50_Bpen_Tmoy_ASO <- lmer(senes50 ~ Tmoy_ASO + (1|ID_zone) + (1|yearQ), senes50_Bpen, REML=F)
+mod_senes50_Bpen_Tnight21j_jsenes50 <- lmer(senes50 ~ Tnight21j_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Bpen, REML=F)
+mod_senes50_Bpen_Tnight30j_jsenes50 <- lmer(senes50 ~ Tnight30j_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Bpen, REML=F)
+mod_senes50_Bpen_Tnight40j_jsenes50 <- lmer(senes50 ~ Tnight40j_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Bpen, REML=F)
+mod_senes50_Bpen_GDDinv25_jsenes50 <- lmer(senes50 ~ GDDinv25_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Bpen, REML=F)
+mod_senes50_Bpen_GDDinv20_jsenes50 <- lmer(senes50 ~ GDDinv20_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Bpen, REML=F)
+mod_senes50_Bpen_GDDinv15_jsenes50 <- lmer(senes50 ~ GDDinv15_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Bpen, REML=F)
+
+AIC(mod_senes50_Bpen_debou10, 
+    mod_senes50_Bpen_P_summer,mod_senes50_Bpen_Tmoy_GS,mod_senes50_Bpen_Tmoy_MJ,mod_senes50_Bpen_Tmoy_AS,mod_senes50_Bpen_Tmoy_ASO,
+    mod_senes50_Bpen_Tnight21j_jsenes50,mod_senes50_Bpen_Tnight30j_jsenes50,mod_senes50_Bpen_Tnight40j_jsenes50,
+    mod_senes50_Bpen_GDDinv25_jsenes50,mod_senes50_Bpen_GDDinv20_jsenes50,mod_senes50_Bpen_GDDinv15_jsenes50)
+# Les variables de GDDinverse à 25 et 20°C donnent les meilleurs résultats (AIC = 13047.74)... on regarde en version multivariables
+
+
+# On peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
+summary(lmer(senes50 ~ P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
+               Tnight21j_jsenes50 + Tnight30j_jsenes50 + Tnight40j_jsenes50 +
+               GDDinv25_jsenes50 + GDDinv20_jsenes50 + GDDinv15_jsenes50 +
+               (1|ID_zone) + (1|yearQ), senes50_Bpen, REML=F), corr=F)
+# On enlève les variables une par une (en fonction des pvalues), et on regarde également l'AIC et la corrélation entre variables
+# En combinant ces 3 critères (AIC, corrélations, significativité des effets), on retient donc :
+mod_senes50_Bpen_multivar = lmer(senes50 ~ GDDinv25_jsenes50 + 
+                                   (1|ID_zone) + (1|yearQ), senes50_Bpen, REML=F) # AIC = 13005.7
+# visreg(mod_senes50_Bpen_multivar, "GDDinv25_jsenes50")
+
+# # On peut aussi complexifier en ajoutant des interactions :
+# mod_senes50_Bpen_multivar = lmer(senes50 ~ P_summer * GDDinv25_jsenes50 + 
+#                                    (1|ID_zone) + (1|yearQ), senes50_Bpen, REML=F) # AIC = 13491.7
+# # visreg(mod_senes50_Bpen_multivar, "GDDinv25_jsenes50", by="P_summer")
+# visreg(mod_senes50_Bpen_multivar, "P_summer", by="GDDinv25_jsenes50")
+
+
+#*-------- 3) On complexifie le modèle ---- 
+# On teste en complexifiant le modèle [différents test à faire] :
+# - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
+# - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
+#   s'il y a aussi des effets précipitations par exemple)
+bestmod_senes50_Bpen = lmer(senes50 ~ altitude + GDDinv25_jsenes50 + 
+                              (1|ID_zone) + (1|yearQ), senes50_Bpen, REML=F) # AIC = 12996.6
+bestmods = c(list("Bouleau_verruqueux"=bestmod_senes50_Bpen), bestmods)
+
+
+summary(bestmod_senes50_Bpen)
+# gradient altitudinal : sénescence 1.0 jour plus tôt quand on monte de 100m
+# accumulation de "froid" : sénescence 0.9 jours plus tôt quand on gagne 1°C de froid 
+qqnorm(resid(bestmod_senes50_Bpen))
+qqline(resid(bestmod_senes50_Bpen))
+
+# Effets fixes VS tous les effets inclus
+R2_models[R2_models$species == "Bouleau_verruqueux", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes50_Bpen)
+# R2 des effets fixes très très nul !!
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_senes50_Bpen)
+# - Validation croisée
+n = nrow(senes50_Bpen)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes50_Bpen[trainIndex ,]
+test <- senes50_Bpen[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes50_Bpen$ID_zone[drop=T])[!unique(senes50_Bpen$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(bestmod_senes50_Bpen), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+# # R2 ajusté = 0.7489
+R2_models[R2_models$species == "Bouleau_verruqueux", "R2_bestmod_calibval"] = summary(lm(predictions~senes50, test2))[["adj.r.squared"]]
+
+
+
+resultats = rbind(resultats, data.frame(species = "Bouleau_verruqueux",
+                                        variable = rownames(coef(summary(bestmod_senes50_Bpen))),
+                                        coef = coef(summary(bestmod_senes50_Bpen))[,1],
+                                        std = coef(summary(bestmod_senes50_Bpen))[,2],
+                                        pval = coef(summary(bestmod_senes50_Bpen))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_senes50_Bpen)[rownames(coef(summary(bestmod_senes50_Bpen)))], error = function(e) return(NA))))
+
+
+
+##############################################-
+#*---- Meleze ----
+
+senes50_Ldec = senes50_Alps[senes50_Alps$species == "Meleze",]
+# # on retire les lignes où on n'a pas de données de température (2005)
+senes50_Ldec = senes50_Ldec[!is.na(senes50_Ldec$Tmoy_GS),]
+ggplot(senes50_Ldec, aes(x=senes50)) + geom_histogram(binwidth=5)
+
+
+#*-------- 1) On regarde un modèle simple comme dans Bison et al. 2019, avec seulement altitude et année ---- 
+mod_senes50_Ldec_Altyear <- lmer(senes50 ~ altitude + year + (year|ID_zone), senes50_Ldec, REML=F)
+summary(mod_senes50_Ldec_Altyear)
+altyearmods = c(list("Meleze"=mod_senes50_Ldec_Altyear), altyearmods)
+
+# On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
+R2_models[R2_models$species == "Meleze", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes50_Ldec_Altyear)
+# + Validation croisée
+n = nrow(senes50_Ldec)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes50_Ldec[trainIndex ,]
+test <- senes50_Ldec[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes50_Ldec$ID_zone[drop=T])[!unique(senes50_Ldec$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_senes50_Ldec_Altyear), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Meleze", "R2_altyear_calibval"] = summary(lm(predictions~senes50, test2))[["adj.r.squared"]]
+
+
+#*-------- 2) On teste l'effet de différentes variables climatiques à la place des variables année et altitude ---- 
+# On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
+
+# # /!\ on ne peut pas comparer le modèle avec débourrement avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
+# #     => on compare tous les modèles avec la DB sans NA dans debou10, si c'est moins bon on prend la DB globale sans considérer la variable debou10
+senes50_Ldec_all = senes50_Ldec
+# ICI le timing de débourrement ne semble pas affecter la sénescence
+senes50_Ldec = senes50_Ldec_all#senes50_Ldec[!is.na(senes50_Ldec$debou10),] #senes50_Ldec_all
+
+mod_senes50_Ldec_debou10 <- lmer(senes50 ~ debou10 + (1|ID_zone) + (1|yearQ), senes50_Ldec, REML=F) 
+mod_senes50_Ldec_P_summer <- lmer(senes50 ~ P_summer + (1|ID_zone) + (1|yearQ), senes50_Ldec, REML=F)
+mod_senes50_Ldec_Tmoy_GS <- lmer(senes50 ~ Tmoy_GS + (1|ID_zone) + (1|yearQ), senes50_Ldec, REML=F)
+mod_senes50_Ldec_Tmoy_MJ <- lmer(senes50 ~ Tmoy_MJ + (1|ID_zone) + (1|yearQ), senes50_Ldec, REML=F)
+mod_senes50_Ldec_Tmoy_AS <- lmer(senes50 ~ Tmoy_AS + (1|ID_zone) + (1|yearQ), senes50_Ldec, REML=F)
+mod_senes50_Ldec_Tmoy_ASO <- lmer(senes50 ~ Tmoy_ASO + (1|ID_zone) + (1|yearQ), senes50_Ldec, REML=F)
+mod_senes50_Ldec_Tnight21j_jsenes50 <- lmer(senes50 ~ Tnight21j_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Ldec, REML=F)
+mod_senes50_Ldec_Tnight30j_jsenes50 <- lmer(senes50 ~ Tnight30j_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Ldec, REML=F)
+mod_senes50_Ldec_Tnight40j_jsenes50 <- lmer(senes50 ~ Tnight40j_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Ldec, REML=F)
+mod_senes50_Ldec_GDDinv25_jsenes50 <- lmer(senes50 ~ GDDinv25_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Ldec, REML=F)
+mod_senes50_Ldec_GDDinv20_jsenes50 <- lmer(senes50 ~ GDDinv20_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Ldec, REML=F)
+mod_senes50_Ldec_GDDinv15_jsenes50 <- lmer(senes50 ~ GDDinv15_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Ldec, REML=F)
+
+AIC(mod_senes50_Ldec_debou10, 
+    mod_senes50_Ldec_P_summer,mod_senes50_Ldec_Tmoy_GS,mod_senes50_Ldec_Tmoy_MJ,mod_senes50_Ldec_Tmoy_AS,mod_senes50_Ldec_Tmoy_ASO,
+    mod_senes50_Ldec_Tnight21j_jsenes50,mod_senes50_Ldec_Tnight30j_jsenes50,mod_senes50_Ldec_Tnight40j_jsenes50,
+    mod_senes50_Ldec_GDDinv25_jsenes50,mod_senes50_Ldec_GDDinv20_jsenes50,mod_senes50_Ldec_GDDinv15_jsenes50)
+# Les températures moyennes estivales (août-septembre) donnent les meilleurs résultats (AIC = 12604.73)... on regarde en version multivariables
+
+
+# On peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
+summary(lmer(senes50 ~ P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
+               Tnight21j_jsenes50 + Tnight30j_jsenes50 + Tnight40j_jsenes50 +
+               GDDinv25_jsenes50 + GDDinv20_jsenes50 + GDDinv15_jsenes50 +
+               (1|ID_zone) + (1|yearQ), senes50_Ldec, REML=F), corr=F)
+# On enlève les variables une par une (en fonction des pvalues), et on regarde également l'AIC 
+# En combinant ces 2 critères (AIC et significativité des effets), on reste sur le modèle à une variable :
+mod_senes50_Ldec_multivar = lmer(senes50 ~ Tmoy_GS + 
+                                   (1|ID_zone) + (1|yearQ), senes50_Ldec, REML=F) # AIC = 12570.8
+# visreg(mod_senes50_Ldec_multivar, "Tmoy_GS")
+
+
+#*-------- 3) On complexifie le modèle ---- 
+# On teste en complexifiant le modèle [différents test à faire] :
+# - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
+# - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
+#   s'il y a aussi des effets précipitations par exemple)
+bestmod_senes50_Ldec = lmer(senes50 ~ altitude * Tmoy_GS  +
+                              (1|ID_zone) + (1|yearQ), senes50_Ldec, REML=F) # AIC = 12513.7
+# Finalement l'altitude donne de meilleurs scores que les variables climatiques...!
+bestmods = c(list("Meleze"=bestmod_senes50_Ldec), bestmods)
+
+
+summary(bestmod_senes50_Ldec)
+visreg(bestmod_senes50_Ldec, "altitude", by="Tmoy_GS")
+# MiSénescence 5.8 jours plus tôt par 100m d'altitude 
+# MiSénescence 3.8 jours plus tôt par 1°C de température moyenne pendant la saison de végétation (gradient plus marqué à plus basse altitude, qui s'inverse quand on est plus haut)
+qqnorm(resid(bestmod_senes50_Ldec))
+qqline(resid(bestmod_senes50_Ldec))
+# /!\ résidus !!!
+
+# Effets fixes VS tous les effets inclus
+R2_models[R2_models$species == "Meleze", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes50_Ldec)
+# R2 des effets fixes plutôt nul !!
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_senes50_Ldec)
+# - Validation croisée
+n = nrow(senes50_Ldec)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes50_Ldec[trainIndex ,]
+test <- senes50_Ldec[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes50_Ldec$ID_zone[drop=T])[!unique(senes50_Ldec$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(bestmod_senes50_Ldec), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Meleze", "R2_bestmod_calibval"] = summary(lm(predictions~senes50, test2))[["adj.r.squared"]]
+
+
+resultats = rbind(resultats, data.frame(species = "Meleze",
+                                        variable = rownames(coef(summary(bestmod_senes50_Ldec))),
+                                        coef = coef(summary(bestmod_senes50_Ldec))[,1],
+                                        std = coef(summary(bestmod_senes50_Ldec))[,2],
+                                        pval = coef(summary(bestmod_senes50_Ldec))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_senes50_Ldec)[rownames(coef(summary(bestmod_senes50_Ldec)))], error = function(e) return(NA))))
+
+
+
+##############################################-
+#*---- Bouleau pubescent ----
+
+senes50_Bpub = senes50_Alps[senes50_Alps$species == "Bouleau_pubescent",]
+# ggplot(senes50_Bpub, aes(x=year)) + geom_histogram(binwidth=1) 
+# # on retire les lignes où on n'a pas de données de température (2005)
+senes50_Bpub = senes50_Bpub[!is.na(senes50_Bpub$Tmoy_GS),]
+ggplot(senes50_Bpub, aes(x=senes50)) + geom_histogram(binwidth=5)
+
+#*-------- 1) On regarde un modèle simple comme dans Bison et al. 2019, avec seulement altitude et année ---- 
+mod_senes50_Bpub_Altyear <- lmer(senes50 ~ altitude + year + (year|ID_zone), senes50_Bpub, REML=F)
+summary(mod_senes50_Bpub_Altyear)
+altyearmods = c(list("Bouleau_pubescent"=mod_senes50_Bpub_Altyear), altyearmods)
+
+# On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
+R2_models[R2_models$species == "Bouleau_pubescent", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes50_Bpub_Altyear)
+# + Validation croisée
+n = nrow(senes50_Bpub)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes50_Bpub[trainIndex ,]
+test <- senes50_Bpub[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes50_Bpub$ID_zone[drop=T])[!unique(senes50_Bpub$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_senes50_Bpub_Altyear), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Bouleau_pubescent", "R2_altyear_calibval"] = summary(lm(predictions~senes50, test2))[["adj.r.squared"]]
+
+
+#*-------- 2) On teste l'effet de différentes variables climatiques à la place des variables année et altitude ---- 
+# On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
+
+# # /!\ on ne peut pas comparer le modèle avec débourrement avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
+# #     => on compare tous les modèles avec la DB sans NA dans debou10, si c'est moins bon on prend la DB globale sans considérer la variable debou10
+senes50_Bpub_all = senes50_Bpub
+# ICI le timing de débourrement ne semble pas affecter la sénescence
+senes50_Bpub = senes50_Bpub_all# senes50_Bpub[!is.na(senes50_Bpub$debou10),] #senes50_Bpub_all
+
+mod_senes50_Bpub_debou10 <- lmer(senes50 ~ debou10 + (1|ID_zone) + (1|yearQ), senes50_Bpub, REML=F) 
+mod_senes50_Bpub_P_summer <- lmer(senes50 ~ P_summer + (1|ID_zone) + (1|yearQ), senes50_Bpub, REML=F)
+mod_senes50_Bpub_Tmoy_GS <- lmer(senes50 ~ Tmoy_GS + (1|ID_zone) + (1|yearQ), senes50_Bpub, REML=F)
+mod_senes50_Bpub_Tmoy_MJ <- lmer(senes50 ~ Tmoy_MJ + (1|ID_zone) + (1|yearQ), senes50_Bpub, REML=F)
+mod_senes50_Bpub_Tmoy_AS <- lmer(senes50 ~ Tmoy_AS + (1|ID_zone) + (1|yearQ), senes50_Bpub, REML=F)
+mod_senes50_Bpub_Tmoy_ASO <- lmer(senes50 ~ Tmoy_ASO + (1|ID_zone) + (1|yearQ), senes50_Bpub, REML=F)
+mod_senes50_Bpub_Tnight21j_jsenes50 <- lmer(senes50 ~ Tnight21j_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Bpub, REML=F)
+mod_senes50_Bpub_Tnight30j_jsenes50 <- lmer(senes50 ~ Tnight30j_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Bpub, REML=F)
+mod_senes50_Bpub_Tnight40j_jsenes50 <- lmer(senes50 ~ Tnight40j_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Bpub, REML=F)
+mod_senes50_Bpub_GDDinv25_jsenes50 <- lmer(senes50 ~ GDDinv25_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Bpub, REML=F)
+mod_senes50_Bpub_GDDinv20_jsenes50 <- lmer(senes50 ~ GDDinv20_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Bpub, REML=F)
+mod_senes50_Bpub_GDDinv15_jsenes50 <- lmer(senes50 ~ GDDinv15_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Bpub, REML=F)
+
+AIC(mod_senes50_Bpub_debou10, 
+    mod_senes50_Bpub_P_summer,mod_senes50_Bpub_Tmoy_GS,mod_senes50_Bpub_Tmoy_MJ,mod_senes50_Bpub_Tmoy_AS,mod_senes50_Bpub_Tmoy_ASO,
+    mod_senes50_Bpub_Tnight21j_jsenes50,mod_senes50_Bpub_Tnight30j_jsenes50,mod_senes50_Bpub_Tnight40j_jsenes50,
+    mod_senes50_Bpub_GDDinv25_jsenes50,mod_senes50_Bpub_GDDinv20_jsenes50,mod_senes50_Bpub_GDDinv15_jsenes50)
+# Les températures estivales donnent les meilleurs résultats... on regarde en version multivariables
+
+
+# On peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
+summary(lmer(senes50 ~ debou10 + P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
+               Tnight21j_jsenes50 + Tnight30j_jsenes50 + Tnight40j_jsenes50 +
+               GDDinv25_jsenes50 + GDDinv20_jsenes50 + GDDinv15_jsenes50 +
+               (1|ID_zone) + (1|yearQ), senes50_Bpub, REML=F), corr=F) # 
+# On enlève les variables une par une (en fonction des pvalues), et on regarde également l'AIC 
+# En combinant ces 2 critères (AIC et significativité des effets), on retient donc :
+mod_senes50_Bpub_multivar = lmer(senes50 ~ Tmoy_GS + 
+                                   (1|ID_zone) + (1|yearQ), senes50_Bpub, REML=F) # AIC = 482.4
+# visreg(mod_senes50_Bpub_multivar, "GDDinv25_jsenes50")
+
+# # On peut aussi complexifier en ajoutant des interactions :
+# mod_senes50_Bpub_multivar = lmer(senes50 ~ Tmoy_GS + 
+#                                    (1|ID_zone) + (1|yearQ), senes50_Bpub, REML=F) # AIC = 641.3
+# # visreg(mod_senes50_Bpub_multivar, "GDDinv25_jsenes50", by="P_summer")
+# visreg(mod_senes50_Bpub_multivar, "P_summer", by="GDDinv25_jsenes50")
+
+
+#*-------- 3) On complexifie le modèle ---- 
+# On teste en complexifiant le modèle [différents test à faire] :
+# - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
+# - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
+#   s'il y a aussi des effets précipitations par exemple)
+bestmod_senes50_Bpub = lmer(senes50 ~ Tmoy_GS +
+                              (1|ID_zone) + (1|yearQ), senes50_Bpub, REML=F) # AIC = 482.4
+bestmods = c(list("Bouleau_pubescent"=bestmod_senes50_Bpub), bestmods)
+visreg(bestmod_senes50_Bpub, "Tmoy_GS")
+
+
+summary(bestmod_senes50_Bpub)
+# températures pendant la saison de végétation : sénescence 4 jours plus tard quand on gagne 1°C
+
+qqnorm(resid(bestmod_senes50_Bpub))
+qqline(resid(bestmod_senes50_Bpub))
+# résidus pas oufs !
+
+
+# Effets fixes VS tous les effets inclus
+R2_models[R2_models$species == "Bouleau_pubescent", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes50_Bpub)
+# R2 des effets fixes très très nul !!
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_senes50_Bpub)
+# - Validation croisée
+n = nrow(senes50_Bpub)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes50_Bpub[trainIndex ,]
+test <- senes50_Bpub[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes50_Bpub$ID_zone[drop=T])[!unique(senes50_Bpub$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(bestmod_senes50_Bpub), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Bouleau_pubescent", "R2_bestmod_calibval"] = summary(lm(predictions~senes50, test2))[["adj.r.squared"]]
+
+
+resultats = rbind(resultats, data.frame(species = "Bouleau_pubescent",
+                                        variable = rownames(coef(summary(bestmod_senes50_Bpub))),
+                                        coef = coef(summary(bestmod_senes50_Bpub))[,1],
+                                        std = coef(summary(bestmod_senes50_Bpub))[,2],
+                                        pval = coef(summary(bestmod_senes50_Bpub))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_senes50_Bpub)[rownames(coef(summary(bestmod_senes50_Bpub)))], error = function(e) return(NA))))
+
+
+
+##############################################-
+#*---- Hetre ----
+
+senes50_Fsyl = senes50_Alps[senes50_Alps$species == "Hetre",]
+# ggplot(senes50_Fsyl, aes(x=year)) + geom_histogram(binwidth=1) 
+# # on retire les lignes où on n'a pas de données de température (2005)
+senes50_Fsyl = senes50_Fsyl[!is.na(senes50_Fsyl$Tmoy_GS),]
+ggplot(senes50_Fsyl, aes(x=senes50)) + geom_histogram(binwidth=5)
+ggplot(senes50_Fsyl, aes(x=year, y=senes50)) + geom_point()
+# Une valeur sort du lot... on peut la retirer ? C'est une obs du CREA !! (zone Fouine, arbre 14011 en 2023... MAIS c'est cohérent entre senes10 et senes50,
+# et on ne l'a pas retirée pour senes10 même si plus précoce de 20 jours environ... (30 jours pour senes50))
+senes50_Fsyl = senes50_Fsyl[senes50_Fsyl$senes50 > 250,]
+
+#*-------- 1) On regarde un modèle simple comme dans Bison et al. 2019, avec seulement altitude et année ---- 
+mod_senes50_Fsyl_Altyear <- lmer(senes50 ~ altitude + year + (year|ID_zone), senes50_Fsyl, REML=F)
+summary(mod_senes50_Fsyl_Altyear)
+
+# On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
+R2_models[R2_models$species == "Hetre", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes50_Fsyl_Altyear)
+# + Validation croisée
+n = nrow(senes50_Fsyl)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes50_Fsyl[trainIndex ,]
+test <- senes50_Fsyl[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes50_Fsyl$ID_zone[drop=T])[!unique(senes50_Fsyl$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_senes50_Fsyl_Altyear), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Hetre", "R2_altyear_calibval"] = summary(lm(predictions~senes50, test2))[["adj.r.squared"]]
+
+
+#*-------- 2) On teste l'effet de différentes variables climatiques à la place des variables année et altitude ---- 
+# On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
+
+# # /!\ on ne peut pas comparer le modèle avec débourrement avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
+# #     => on compare tous les modèles avec la DB sans NA dans debou10, si c'est moins bon on prend la DB globale sans considérer la variable debou10
+senes50_Fsyl_all = senes50_Fsyl
+# ICI le timing de débourrement ne semble pas affecter la sénescence
+senes50_Fsyl = senes50_Fsyl_all# senes50_Fsyl[!is.na(senes50_Fsyl$debou10),] #senes50_Fsyl_all
+
+mod_senes50_Fsyl_debou10 <- lmer(senes50 ~ debou10 + (1|ID_zone) + (1|yearQ), senes50_Fsyl, REML=F) 
+mod_senes50_Fsyl_P_summer <- lmer(senes50 ~ P_summer + (1|ID_zone) + (1|yearQ), senes50_Fsyl, REML=F)
+mod_senes50_Fsyl_Tmoy_GS <- lmer(senes50 ~ Tmoy_GS + (1|ID_zone) + (1|yearQ), senes50_Fsyl, REML=F)
+mod_senes50_Fsyl_Tmoy_MJ <- lmer(senes50 ~ Tmoy_MJ + (1|ID_zone) + (1|yearQ), senes50_Fsyl, REML=F)
+mod_senes50_Fsyl_Tmoy_AS <- lmer(senes50 ~ Tmoy_AS + (1|ID_zone) + (1|yearQ), senes50_Fsyl, REML=F)
+mod_senes50_Fsyl_Tmoy_ASO <- lmer(senes50 ~ Tmoy_ASO + (1|ID_zone) + (1|yearQ), senes50_Fsyl, REML=F)
+mod_senes50_Fsyl_Tnight21j_jsenes50 <- lmer(senes50 ~ Tnight21j_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Fsyl, REML=F)
+mod_senes50_Fsyl_Tnight30j_jsenes50 <- lmer(senes50 ~ Tnight30j_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Fsyl, REML=F)
+mod_senes50_Fsyl_Tnight40j_jsenes50 <- lmer(senes50 ~ Tnight40j_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Fsyl, REML=F)
+mod_senes50_Fsyl_GDDinv25_jsenes50 <- lmer(senes50 ~ GDDinv25_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Fsyl, REML=F)
+mod_senes50_Fsyl_GDDinv20_jsenes50 <- lmer(senes50 ~ GDDinv20_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Fsyl, REML=F)
+mod_senes50_Fsyl_GDDinv15_jsenes50 <- lmer(senes50 ~ GDDinv15_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Fsyl, REML=F)
+
+AIC(mod_senes50_Fsyl_debou10, 
+    mod_senes50_Fsyl_P_summer,mod_senes50_Fsyl_Tmoy_GS,mod_senes50_Fsyl_Tmoy_MJ,mod_senes50_Fsyl_Tmoy_AS,mod_senes50_Fsyl_Tmoy_ASO,
+    mod_senes50_Fsyl_Tnight21j_jsenes50,mod_senes50_Fsyl_Tnight30j_jsenes50,mod_senes50_Fsyl_Tnight40j_jsenes50,
+    mod_senes50_Fsyl_GDDinv25_jsenes50,mod_senes50_Fsyl_GDDinv20_jsenes50,mod_senes50_Fsyl_GDDinv15_jsenes50)
+# Tout donne à peu près la même chose... bizarre...
+
+
+# On peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
+summary(lmer(senes50 ~ P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
+               Tnight21j_jsenes50 + Tnight30j_jsenes50 + Tnight40j_jsenes50 +
+               GDDinv25_jsenes50 + GDDinv20_jsenes50 + GDDinv15_jsenes50 +
+               (1|ID_zone) + (1|yearQ), senes50_Fsyl, REML=F), corr=F)
+# On enlève les variables une par une (en fonction des pvalues), et on regarde également l'AIC 
+
+# NUL NUL NUL !!!!
+
+
+# # En combinant ces 2 critères (AIC et significativité des effets), on retient donc :
+# mod_senes50_Fsyl_multivar = lmer(senes50 ~ P_summer + Tmoy_AS + Tmoy_ASO + 
+#                                    GDDinv25_jsenes50 +
+#                                    (1|ID_zone) + (1|yearQ), senes50_Fsyl, REML=F) # AIC = 526.1
+# # visreg(mod_senes50_Fsyl_multivar, "GDDinv25_jsenes50")
+#
+# # On peut aussi complexifier en ajoutant des interactions :
+# mod_senes50_Fsyl_multivar = lmer(senes50 ~ P_summer * Tmoy_AS + 
+#                                    (1|ID_zone) + (1|yearQ), senes50_Fsyl, REML=F) # AIC = 521.4
+# # visreg(mod_senes50_Fsyl_multivar, "Tmoy_AS", by="P_summer")
+# # visreg(mod_senes50_Fsyl_multivar, "P_summer", by="Tmoy_AS")
+# # TOUJOURS NUL !!!
+
+
+#*-------- 3) On complexifie le modèle ---- 
+# On teste en complexifiant le modèle [différents test à faire] :
+# - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
+# - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
+#   s'il y a aussi des effets précipitations par exemple)
+bestmod_senes50_Fsyl = lmer(senes50 ~ altitude + 
+                              (1|ID_zone) + (1|yearQ), senes50_Fsyl, REML=F) # AIC = 392.6
+bestmods = c(list("Hetre"=bestmod_senes50_Fsyl), bestmods)
+# visreg(bestmod_senes50_Fsyl, "P_summer", by="Tmoy_AS")
+# visreg(bestmod_senes50_Fsyl, "Tmoy_AS", by="P_summer")
+
+
+summary(bestmod_senes50_Fsyl)
+# mi-sénescence 3.4 jours plus tôt paour 100m d'altitude
+
+qqnorm(resid(bestmod_senes50_Fsyl))
+qqline(resid(bestmod_senes50_Fsyl))
+# résidus à peu près ok 
+
+
+# Effets fixes VS tous les effets inclus
+R2_models[R2_models$species == "Hetre", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes50_Fsyl)
+# R2 des effets fixes très très nul !!
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_senes50_Fsyl)
+# - Validation croisée
+n = nrow(senes50_Fsyl)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes50_Fsyl[trainIndex ,]
+test <- senes50_Fsyl[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes50_Fsyl$ID_zone[drop=T])[!unique(senes50_Fsyl$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(bestmod_senes50_Fsyl), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+# # R2 ajusté = 0.7489
+R2_models[R2_models$species == "Hetre", "R2_bestmod_calibval"] = summary(lm(predictions~senes50, test2))[["adj.r.squared"]]
+
+
+resultats = rbind(resultats, data.frame(species = "Hetre",
+                                        variable = rownames(coef(summary(bestmod_senes50_Fsyl))),
+                                        coef = coef(summary(bestmod_senes50_Fsyl))[,1],
+                                        std = coef(summary(bestmod_senes50_Fsyl))[,2],
+                                        pval = coef(summary(bestmod_senes50_Fsyl))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_senes50_Fsyl)[rownames(coef(summary(bestmod_senes50_Fsyl)))], error = function(e) return(NA))))
+
+
+
+##############################################-
+#*---- Sorbier ----
+
+senes50_Sacu = senes50_Alps[senes50_Alps$species == "Sorbier",]
+# ggplot(senes50_Sacu, aes(x=year)) + geom_histogram(binwidth=1) 
+# # on retire les lignes où on n'a pas de données de température (2005)
+senes50_Sacu = senes50_Sacu[!is.na(senes50_Sacu$Tmoy_GS),]
+ggplot(senes50_Sacu, aes(x=senes50)) + geom_histogram(binwidth=5)
+
+#*-------- 1) On regarde un modèle simple comme dans Bison et al. 2019, avec seulement altitude et année ---- 
+mod_senes50_Sacu_Altyear <- lmer(senes50 ~ altitude + year + (year|ID_zone), senes50_Sacu, REML=F)
+summary(mod_senes50_Sacu_Altyear)
+
+# On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
+R2_models[R2_models$species == "Sorbier", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes50_Sacu_Altyear)
+# + Validation croisée
+n = nrow(senes50_Sacu)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes50_Sacu[trainIndex ,]
+test <- senes50_Sacu[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes50_Sacu$ID_zone[drop=T])[!unique(senes50_Sacu$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_senes50_Sacu_Altyear), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Sorbier", "R2_altyear_calibval"] = summary(lm(predictions~senes50, test2))[["adj.r.squared"]]
+
+
+#*-------- 2) On teste l'effet de différentes variables climatiques à la place des variables année et altitude ---- 
+# On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
+
+# # /!\ on ne peut pas comparer le modèle avec débourrement avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
+# #     => on compare tous les modèles avec la DB sans NA dans debou10, si c'est moins bon on prend la DB globale sans considérer la variable debou10
+senes50_Sacu_all = senes50_Sacu
+# ICI le timing de débourrement ne semble pas affecter la sénescence
+senes50_Sacu = senes50_Sacu_all# senes50_Sacu[!is.na(senes50_Sacu$debou10),] #senes50_Sacu_all
+
+mod_senes50_Sacu_debou10 <- lmer(senes50 ~ debou10 + (1|ID_zone) + (1|yearQ), senes50_Sacu, REML=F) 
+mod_senes50_Sacu_P_summer <- lmer(senes50 ~ P_summer + (1|ID_zone) + (1|yearQ), senes50_Sacu, REML=F)
+mod_senes50_Sacu_Tmoy_GS <- lmer(senes50 ~ Tmoy_GS + (1|ID_zone) + (1|yearQ), senes50_Sacu, REML=F)
+mod_senes50_Sacu_Tmoy_MJ <- lmer(senes50 ~ Tmoy_MJ + (1|ID_zone) + (1|yearQ), senes50_Sacu, REML=F)
+mod_senes50_Sacu_Tmoy_AS <- lmer(senes50 ~ Tmoy_AS + (1|ID_zone) + (1|yearQ), senes50_Sacu, REML=F)
+mod_senes50_Sacu_Tmoy_ASO <- lmer(senes50 ~ Tmoy_ASO + (1|ID_zone) + (1|yearQ), senes50_Sacu, REML=F)
+mod_senes50_Sacu_Tnight21j_jsenes50 <- lmer(senes50 ~ Tnight21j_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Sacu, REML=F)
+mod_senes50_Sacu_Tnight30j_jsenes50 <- lmer(senes50 ~ Tnight30j_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Sacu, REML=F)
+mod_senes50_Sacu_Tnight40j_jsenes50 <- lmer(senes50 ~ Tnight40j_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Sacu, REML=F)
+mod_senes50_Sacu_GDDinv25_jsenes50 <- lmer(senes50 ~ GDDinv25_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Sacu, REML=F)
+mod_senes50_Sacu_GDDinv20_jsenes50 <- lmer(senes50 ~ GDDinv20_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Sacu, REML=F)
+mod_senes50_Sacu_GDDinv15_jsenes50 <- lmer(senes50 ~ GDDinv15_jsenes50 + (1|ID_zone) + (1|yearQ), senes50_Sacu, REML=F)
+
+AIC(mod_senes50_Sacu_debou10, 
+    mod_senes50_Sacu_P_summer,mod_senes50_Sacu_Tmoy_GS,mod_senes50_Sacu_Tmoy_MJ,mod_senes50_Sacu_Tmoy_AS,mod_senes50_Sacu_Tmoy_ASO,
+    mod_senes50_Sacu_Tnight21j_jsenes50,mod_senes50_Sacu_Tnight30j_jsenes50,mod_senes50_Sacu_Tnight40j_jsenes50,
+    mod_senes50_Sacu_GDDinv25_jsenes50,mod_senes50_Sacu_GDDinv20_jsenes50,mod_senes50_Sacu_GDDinv15_jsenes50)
+# Les variables de température AS - ASO donnent les meilleurs résultats (AIC = 4940.168)...
+# on regarde en version multivariables
+
+
+# On peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
+summary(lmer(senes50 ~ debou10 + P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
+               Tnight21j_jsenes50 + Tnight30j_jsenes50 + Tnight40j_jsenes50 +
+               GDDinv25_jsenes50 + GDDinv20_jsenes50 + GDDinv15_jsenes50 +
+               (1|ID_zone) + (1|yearQ), senes50_Sacu, REML=F), corr=F)  # /!\ en ayant ajouté debou10, on tronque la base de données de 20% !
+# On enlève les variables une par une (en fonction des pvalues), et on regarde également l'AIC 
+# En combinant ces 2 critères (AIC et significativité des effets), on retient donc :
+mod_senes50_Sacu_multivar = lmer(senes50 ~ Tnight30j_jsenes50 +
+                                   (1|ID_zone) + (1|yearQ), senes50_Sacu, REML=F) # AIC = 5095.0
+# visreg(mod_senes50_Sacu_multivar, "GDDinv25_jsenes50")
+
+# On peut aussi complexifier en ajoutant des interactions 
+mod_senes50_Sacu_multivar = lmer(senes50 ~ Tnight30j_jsenes50 * P_summer +
+                                   (1|ID_zone) + (1|yearQ), senes50_Sacu, REML=F) # AIC = 5077.0
+
+
+#*-------- 3) On complexifie le modèle ---- 
+# On teste en complexifiant le modèle [différents test à faire] :
+# - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
+# - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
+#   s'il y a aussi des effets précipitations par exemple)
+bestmod_senes50_Sacu = lmer(senes50 ~ Tnight30j_jsenes50 * P_summer +
+                              (1|ID_zone) + (1|yearQ), senes50_Sacu, REML=F) # AIC = 5077.0
+# Ici l'altitude n'améliore rien, MAIS en mettant la date de débourrement en variable explicative on tronque la base de données
+bestmods = c(list("Sorbier"=bestmod_senes50_Sacu), bestmods)
+# visreg(bestmod_senes50_Sacu, "P_summer", by="Tmoy_AS")
+# visreg(bestmod_senes50_Sacu, "Tmoy_AS", by="P_summer")
+
+
+summary(bestmod_senes50_Sacu)
+# températures nocturnes un peu avant la sénescence : sénescence 1.5 jours plus tard quand on gagne 1°C en moyenne la nuit
+# accumulation de froid (pas vraiment significatif !) : sénescence 1.1 jour plus tard quand on gagne 1°C de froid
+# quand le débourrement est plus tardif d'une semaine, la sénescence est retardée d'1 jour seulement
+
+qqnorm(resid(bestmod_senes50_Sacu))
+qqline(resid(bestmod_senes50_Sacu))
+# résidus quasi ok !
+
+
+# Effets fixes VS tous les effets inclus
+R2_models[R2_models$species == "Sorbier", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes50_Sacu)
+# R2 des effets fixes très très nul !!
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_senes50_Sacu)
+# - Validation croisée
+n = nrow(senes50_Sacu)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senes50_Sacu[trainIndex ,]
+test <- senes50_Sacu[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senes50_Sacu$ID_zone[drop=T])[!unique(senes50_Sacu$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(bestmod_senes50_Sacu), train)
+predictions <- mod_train %>% predict(test1) # BUG !!!
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Sorbier", "R2_bestmod_calibval"] = summary(lm(predictions~senes50, test2))[["adj.r.squared"]]
+
+
+
+resultats = rbind(resultats, data.frame(species = "Sorbier",
+                                        variable = rownames(coef(summary(bestmod_senes50_Sacu))),
+                                        coef = coef(summary(bestmod_senes50_Sacu))[,1],
+                                        std = coef(summary(bestmod_senes50_Sacu))[,2],
+                                        pval = coef(summary(bestmod_senes50_Sacu))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_senes50_Sacu)[rownames(coef(summary(bestmod_senes50_Sacu)))], error = function(e) return(NA))))
+
+
+
+write.csv(resultats[-1,], "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resultats_modeles_senes50__coeff.csv", row.names = F)
+write.csv(R2_models[!is.na(R2_models$R2_bestmod_fixef),], "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resultats_modeles_senes50__R2.csv", row.names = F)
+save(bestmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/bestmods_senes50.Rdata")
+save(altyearmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/mods_senes50_v1altyear.Rdata")
 
 
 
@@ -880,9 +1824,9 @@ save(bestmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim
 ##############################################-
 
 
-senes_Alps = senes_Alps_all[!is.na(senes_Alps_all$senesduree),]
+senesduree_Alps = senes_Alps_all[!is.na(senes_Alps_all$senesduree),]
 # on considère qu'il n'est pas possible de passer de 10 à 50% de feuilles qui ont changé de couleur en moins de 2 jours (erreur de saisie ?)
-senes_Alps = senes_Alps_all[senes_Alps_all$senesduree >= 2,] 
+senesduree_Alps = senesduree_Alps[senesduree_Alps$senesduree >= 2,] 
 
 # Initialisation d'un tableau de résultat (coefficients du meilleur modèle pour chaque espèce)
 # (RQ : pour le débourrement, on avait comparé les résultats sur les périodes 2006-2016 et 2006-2024, en lien avec le papier de Bison et al 2019. Pour 
@@ -890,77 +1834,88 @@ senes_Alps = senes_Alps_all[senes_Alps_all$senesduree >= 2,]
 resultats = data.frame(species = NA, variable = NA, coef = NA, std=NA, pval=NA, varexpli=NA)
 
 # Initialisation d'un tableau pour comparer l'intérêt d'avoir des modèles intégrant la température, par rapport aux modèles avec année et altitude
-R2_models = data.frame(species = unique(senes_Alps$species), R2_altyear_fixef = NA, R2_altyear_allef = NA, R2_bestmod_fixef = NA, R2_bestmod_allef = NA)
+# Initialisation d'un tableau pour comparer l'intérêt d'avoir des modèles intégrant la température, par rapport aux modèles avec année et altitude
+R2_models = data.frame(species = unique(senesduree_Alps$species), 
+                       R2_altyear_fixef = NA, R2_altyear_allef = NA, R2_altyear_calibval = NA, 
+                       R2_bestmod_fixef = NA, R2_bestmod_allef = NA, R2_bestmod_calibval = NA)
 
 # Initialisation d'une liste avec tous les meilleurs modèles
 bestmods = list()
+altyearmods = list()
 
 
 ##############################################-
 #*---- Bouleau verruqueux ----
 
-senes_Bpen = senes_Alps[senes_Alps$species == "Bouleau_verruqueux",]
-# ggplot(senes_Bpen, aes(x=year)) + geom_histogram(binwidth=1) 
+senesduree_Bpen = senesduree_Alps[senesduree_Alps$species == "Bouleau_verruqueux",]
 # # on retire les lignes où on n'a pas de données de température (2005)
-senes_Bpen = senes_Bpen[!is.na(senes_Bpen$Tmoy_GS),]
-# hist(senes_Bpen$senesduree)
-# ggplot(senes_Bpen, aes(x=year, y=senesduree)) + geom_point() + geom_smooth(method=lm) + labs(title = "Durée de la sénescence - Bouleau", x="Année",y="Durée (jours)")
+senesduree_Bpen = senesduree_Bpen[!is.na(senesduree_Bpen$Tmoy_GS),]
+ggplot(senesduree_Bpen, aes(x=senesduree)) + geom_histogram(binwidth=5)
 
 #*-------- 1) On regarde un modèle simple comme dans Bison et al. 2019, avec seulement altitude et année ---- 
-mod_senes_Bpen_Altyear <- lmer(senesduree ~ altitude + year + (year|nom_zone), senes_Bpen, REML=F)
-summary(mod_senes_Bpen_Altyear)
+mod_senesduree_Bpen_Altyear <- lmer(senesduree ~ altitude + year + (year|ID_zone), senesduree_Bpen, REML=F)
+summary(mod_senesduree_Bpen_Altyear)
+altyearmods = c(list("Bouleau_verruqueux"=mod_senesduree_Bpen_Altyear), altyearmods)
 
 # On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
-R2_models[R2_models$species == "Bouleau_verruqueux", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes_Bpen_Altyear)
-# Pas ouf du tout !! 
+R2_models[R2_models$species == "Bouleau_verruqueux", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senesduree_Bpen_Altyear)
+# + Validation croisée
+n = nrow(senesduree_Bpen)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senesduree_Bpen[trainIndex ,]
+test <- senesduree_Bpen[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senesduree_Bpen$ID_zone[drop=T])[!unique(senesduree_Bpen$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_senesduree_Bpen_Altyear), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Bouleau_verruqueux", "R2_altyear_calibval"] = summary(lm(predictions~senesduree, test2))[["adj.r.squared"]]
 
 
 #*-------- 2) On teste l'effet de différentes variables climatiques à la place des variables année et altitude ---- 
 # On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
 
-# mod_senes_Bpen_debou10 <- lmer(senesduree ~ debou10 + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F) 
-# # /!\ on ne peut pas comparer ce modèle avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
+# # /!\ on ne peut pas comparer le modèle avec débourrement avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
 # #     => on compare tous les modèles avec la DB sans NA dans debou10, si c'est moins bon on prend la DB globale sans considérer la variable debou10
-mod_senes_Bpen_P_summer <- lmer(senesduree ~ P_summer + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_Tmoy_GS <- lmer(senesduree ~ Tmoy_GS + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_Tmoy_MJ <- lmer(senesduree ~ Tmoy_MJ + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_Tmoy_AS <- lmer(senesduree ~ Tmoy_AS + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_Tmoy_ASO <- lmer(senesduree ~ Tmoy_ASO + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_Tnight21j_jsenes10 <- lmer(senesduree ~ Tnight21j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_Tnight30j_jsenes10 <- lmer(senesduree ~ Tnight30j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_Tnight40j_jsenes10 <- lmer(senesduree ~ Tnight40j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_Tnight21j_jsenes50 <- lmer(senesduree ~ Tnight21j_jsenes50 + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_Tnight30j_jsenes50 <- lmer(senesduree ~ Tnight30j_jsenes50 + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_Tnight40j_jsenes50 <- lmer(senesduree ~ Tnight40j_jsenes50 + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_GDDinv25_jsenes10 <- lmer(senesduree ~ GDDinv25_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_GDDinv20_jsenes10 <- lmer(senesduree ~ GDDinv20_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
-mod_senes_Bpen_GDDinv15_jsenes10 <- lmer(senesduree ~ GDDinv15_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F)
+senesduree_Bpen_all = senesduree_Bpen
+# ICI le timing de débourrement ne semble pas affecter la sénescence
+senesduree_Bpen = senesduree_Bpen_all#senesduree_Bpen[!is.na(senesduree_Bpen$debou10),] #senesduree_Bpen_all
 
-AIC(#mod_senes_Bpen_debou10, 
-  mod_senes_Bpen_P_summer,mod_senes_Bpen_Tmoy_GS,mod_senes_Bpen_Tmoy_MJ,mod_senes_Bpen_Tmoy_AS,mod_senes_Bpen_Tmoy_ASO,
-  mod_senes_Bpen_Tnight21j_jsenes10,mod_senes_Bpen_Tnight30j_jsenes10,mod_senes_Bpen_Tnight40j_jsenes10,
-  mod_senes_Bpen_Tnight21j_jsenes50,mod_senes_Bpen_Tnight30j_jsenes50,mod_senes_Bpen_Tnight40j_jsenes50,
-  mod_senes_Bpen_GDDinv25_jsenes10,mod_senes_Bpen_GDDinv20_jsenes10,mod_senes_Bpen_GDDinv15_jsenes10)
-# Les températures nocturnes pendant et un peu avant sénescence donnent les meilleurs résultats (AIC = 11755.76)... on regarde en version multivariables
+mod_senesduree_Bpen_debou10 <- lmer(senesduree ~ debou10 + (1|ID_zone) + (1|yearQ), senesduree_Bpen, REML=F) 
+mod_senesduree_Bpen_P_summer <- lmer(senesduree ~ P_summer + (1|ID_zone) + (1|yearQ), senesduree_Bpen, REML=F)
+mod_senesduree_Bpen_Tmoy_GS <- lmer(senesduree ~ Tmoy_GS + (1|ID_zone) + (1|yearQ), senesduree_Bpen, REML=F)
+mod_senesduree_Bpen_Tmoy_MJ <- lmer(senesduree ~ Tmoy_MJ + (1|ID_zone) + (1|yearQ), senesduree_Bpen, REML=F)
+mod_senesduree_Bpen_Tmoy_AS <- lmer(senesduree ~ Tmoy_AS + (1|ID_zone) + (1|yearQ), senesduree_Bpen, REML=F)
+mod_senesduree_Bpen_Tmoy_ASO <- lmer(senesduree ~ Tmoy_ASO + (1|ID_zone) + (1|yearQ), senesduree_Bpen, REML=F)
+mod_senesduree_Bpen_Tnight21j_jsenes10 <- lmer(senesduree ~ Tnight21j_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Bpen, REML=F)
+mod_senesduree_Bpen_Tnight30j_jsenes10 <- lmer(senesduree ~ Tnight30j_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Bpen, REML=F)
+mod_senesduree_Bpen_Tnight40j_jsenes10 <- lmer(senesduree ~ Tnight40j_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Bpen, REML=F)
+mod_senesduree_Bpen_GDDinv25_jsenes10 <- lmer(senesduree ~ GDDinv25_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Bpen, REML=F)
+mod_senesduree_Bpen_GDDinv20_jsenes10 <- lmer(senesduree ~ GDDinv20_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Bpen, REML=F)
+mod_senesduree_Bpen_GDDinv15_jsenes10 <- lmer(senesduree ~ GDDinv15_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Bpen, REML=F)
 
+AIC(mod_senesduree_Bpen_debou10, 
+    mod_senesduree_Bpen_P_summer,mod_senesduree_Bpen_Tmoy_GS,mod_senesduree_Bpen_Tmoy_MJ,mod_senesduree_Bpen_Tmoy_AS,mod_senesduree_Bpen_Tmoy_ASO,
+    mod_senesduree_Bpen_Tnight21j_jsenes10,mod_senesduree_Bpen_Tnight30j_jsenes10,mod_senesduree_Bpen_Tnight40j_jsenes10,
+    mod_senesduree_Bpen_GDDinv25_jsenes10,mod_senesduree_Bpen_GDDinv20_jsenes10,mod_senesduree_Bpen_GDDinv15_jsenes10)
+# Pas une grosse différence entre les variables... et la date de débourrement n'apporte pas grandchose (mais tronque 20% des données)
 
 # On peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
 summary(lmer(senesduree ~ P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
                Tnight21j_jsenes10 + Tnight30j_jsenes10 + Tnight40j_jsenes10 +
-               Tnight21j_jsenes50 + Tnight30j_jsenes50 + Tnight40j_jsenes50 +
                GDDinv25_jsenes10 + GDDinv20_jsenes10 + GDDinv15_jsenes10 +
-               (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F), corr=F)
-# On enlève les variables une par une (en fonction des pvalues), et on regarde également l'AIC 
-# En combinant ces 2 critères (AIC et significativité des effets), on retient donc :
-mod_senes_Bpen_multivar = lmer(senesduree ~ Tmoy_ASO + Tnight40j_jsenes50 + 
-                                 (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F) # AIC = 11753.7
-# visreg(mod_senes_Bpen_multivar, "GDDinv25_jsenes10")
+               (1|ID_zone) + (1|yearQ), senesduree_Bpen, REML=F), corr=F)
+# On enlève les variables une par une (en fonction des pvalues), et on regarde également l'AIC et la corrélation entre variables
+# En combinant ces 3 critères (AIC, corrélations, significativité des effets), on retient donc :
+mod_senesduree_Bpen_multivar = lmer(senesduree ~ P_summer + Tnight40j_jsenes50 + 
+                                   (1|ID_zone) + (1|yearQ), senesduree_Bpen, REML=F) # AIC = 11841.5
+# visreg(mod_senesduree_Bpen_multivar, "Tnight40j_jsenes50")
 
-# On peut aussi complexifier en ajoutant des interactions (ici ça n'améliore pas le modèle) :
-# mod_senes_Bpen_multivar = lmer(senesduree ~ P_summer * GDDinv25_jsenes10 + 
-#                                  (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F) 
-# # visreg(mod_senes_Bpen_multivar, "GDDinv25_jsenes10", by="P_summer")
-# visreg(mod_senes_Bpen_multivar, "P_summer", by="GDDinv25_jsenes10")
+# # On peut aussi complexifier en ajoutant des interactions :
+# mod_senesduree_Bpen_multivar = lmer(senesduree ~ P_summer * GDDinv25_jsenes10 + 
+#                                    (1|ID_zone) + (1|yearQ), senesduree_Bpen, REML=F) 
+# # visreg(mod_senesduree_Bpen_multivar, "GDDinv25_jsenes10", by="P_summer")
+# visreg(mod_senesduree_Bpen_multivar, "P_summer", by="GDDinv25_jsenes10")
 
 
 #*-------- 3) On complexifie le modèle ---- 
@@ -968,199 +1923,234 @@ mod_senes_Bpen_multivar = lmer(senesduree ~ Tmoy_ASO + Tnight40j_jsenes50 +
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-# Ici ça n'améliore pas le modèle
-bestmod_senes_Bpen = lmer(senesduree ~ Tmoy_ASO + Tnight40j_jsenes50 + 
-                            (1|nom_zone) + (1|yearQ), senes_Bpen, REML=F) # AIC = 11753.7
-bestmods = c(list("Bouleau_verruqueux"=bestmod_senes_Bpen), bestmods)
+bestmod_senesduree_Bpen = lmer(senesduree ~ P_summer + Tnight40j_jsenes50 +  
+                              (1|ID_zone) + (1|yearQ), senesduree_Bpen, REML=F) # AIC = 11841.5
+bestmods = c(list("Bouleau_verruqueux"=bestmod_senesduree_Bpen), bestmods)
 
 
-summary(bestmod_senes_Bpen)
-# températures nocturnes : sénescence 1.5 jours plus longue / ralentie quand il fait 1°C plus chaud
-qqnorm(resid(bestmod_senes_Bpen))
-qqline(resid(bestmod_senes_Bpen))
+summary(bestmod_senesduree_Bpen)
+# sénescence rallongée de 1 jour par 5mm de pluie supplémentaire pendant l'été
+# sénescence rallongée de 0.7 jour quand il fait plus froid la nuit de 1°C
+qqnorm(resid(bestmod_senesduree_Bpen))
+qqline(resid(bestmod_senesduree_Bpen))
 
 # Effets fixes VS tous les effets inclus
-R2_models[R2_models$species == "Bouleau_verruqueux", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes_Bpen)
-# R2 mieux que sans variable climatique, mais ça reste assez nul !!
+R2_models[R2_models$species == "Bouleau_verruqueux", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senesduree_Bpen)
+# R2 des effets fixes très très nul !!
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_senesduree_Bpen)
+# - Validation croisée
+n = nrow(senesduree_Bpen)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senesduree_Bpen[trainIndex ,]
+test <- senesduree_Bpen[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senesduree_Bpen$ID_zone[drop=T])[!unique(senesduree_Bpen$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(bestmod_senesduree_Bpen), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+# # R2 ajusté = 0.7489
+R2_models[R2_models$species == "Bouleau_verruqueux", "R2_bestmod_calibval"] = summary(lm(predictions~senesduree, test2))[["adj.r.squared"]]
 
-# Part de variance expliquée par les différentes variables
-calcVarPart(bestmod_senes_Bpen)
 
 
 resultats = rbind(resultats, data.frame(species = "Bouleau_verruqueux",
-                                        variable = rownames(coef(summary(bestmod_senes_Bpen))),
-                                        coef = coef(summary(bestmod_senes_Bpen))[,1],
-                                        std = coef(summary(bestmod_senes_Bpen))[,2],
-                                        pval = coef(summary(bestmod_senes_Bpen))[,5],
-                                        varexpli = calcVarPart(bestmod_senes_Bpen)[rownames(coef(summary(bestmod_senes_Bpen)))]))
+                                        variable = rownames(coef(summary(bestmod_senesduree_Bpen))),
+                                        coef = coef(summary(bestmod_senesduree_Bpen))[,1],
+                                        std = coef(summary(bestmod_senesduree_Bpen))[,2],
+                                        pval = coef(summary(bestmod_senesduree_Bpen))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_senesduree_Bpen)[rownames(coef(summary(bestmod_senesduree_Bpen)))], error = function(e) return(NA))))
 
 
 
 ##############################################-
 #*---- Meleze ----
 
-senes_Ldec = senes_Alps[senes_Alps$species == "Meleze",]
-# ggplot(senes_Ldec, aes(x=year)) + geom_histogram(binwidth=1) 
+senesduree_Ldec = senesduree_Alps[senesduree_Alps$species == "Meleze",]
 # # on retire les lignes où on n'a pas de données de température (2005)
-senes_Ldec = senes_Ldec[!is.na(senes_Ldec$Tmoy_GS),]
-# hist(senes_Ldec$senesduree)
-# ggplot(senes_Bpen, aes(x=year, y=senesduree)) + geom_point() + geom_smooth(method=lm) + labs(title = "Durée de la sénescence - Meleze", x="Année",y="Durée (jours)")
+senesduree_Ldec = senesduree_Ldec[!is.na(senesduree_Ldec$Tmoy_GS),]
+ggplot(senesduree_Ldec, aes(x=senesduree)) + geom_histogram(binwidth=5)
+
 
 #*-------- 1) On regarde un modèle simple comme dans Bison et al. 2019, avec seulement altitude et année ---- 
-mod_senes_Ldec_Altyear <- lmer(senesduree ~ altitude + year + (year|nom_zone), senes_Ldec, REML=F)
-summary(mod_senes_Ldec_Altyear)
+mod_senesduree_Ldec_Altyear <- lmer(senesduree ~ altitude + year + (year|ID_zone), senesduree_Ldec, REML=F)
+summary(mod_senesduree_Ldec_Altyear)
+altyearmods = c(list("Meleze"=mod_senesduree_Ldec_Altyear), altyearmods)
 
 # On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
-R2_models[R2_models$species == "Meleze", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes_Ldec_Altyear)
+R2_models[R2_models$species == "Meleze", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senesduree_Ldec_Altyear)
+# + Validation croisée
+n = nrow(senesduree_Ldec)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senesduree_Ldec[trainIndex ,]
+test <- senesduree_Ldec[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senesduree_Ldec$ID_zone[drop=T])[!unique(senesduree_Ldec$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_senesduree_Ldec_Altyear), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Meleze", "R2_altyear_calibval"] = summary(lm(predictions~senesduree, test2))[["adj.r.squared"]]
 
 
 #*-------- 2) On teste l'effet de différentes variables climatiques à la place des variables année et altitude ---- 
 # On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
 
-# mod_senes_Ldec_debou10 <- lmer(senesduree ~ debou10 + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-# /!\ on ne peut pas comparer ce modèle avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
-#     => on compare tous les modèles avec la DB sans NA dans debou10, si c'est moins bon on prend la DB globale sans considérer la variable debou10
-mod_senes_Ldec_P_summer <- lmer(senesduree ~ P_summer + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_Tmoy_GS <- lmer(senesduree ~ Tmoy_GS + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_Tmoy_MJ <- lmer(senesduree ~ Tmoy_MJ + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_Tmoy_AS <- lmer(senesduree ~ Tmoy_AS + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_Tmoy_ASO <- lmer(senesduree ~ Tmoy_ASO + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_Tnight21j_jsenes10 <- lmer(senesduree ~ Tnight21j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_Tnight30j_jsenes10 <- lmer(senesduree ~ Tnight30j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_Tnight40j_jsenes10 <- lmer(senesduree ~ Tnight40j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_Tnight21j_jsenes50 <- lmer(senesduree ~ Tnight21j_jsenes50 + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_Tnight30j_jsenes50 <- lmer(senesduree ~ Tnight30j_jsenes50 + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_Tnight40j_jsenes50 <- lmer(senesduree ~ Tnight40j_jsenes50 + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_GDDinv25_jsenes10 <- lmer(senesduree ~ GDDinv25_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_GDDinv20_jsenes10 <- lmer(senesduree ~ GDDinv20_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
-mod_senes_Ldec_GDDinv15_jsenes10 <- lmer(senesduree ~ GDDinv15_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F)
+# # /!\ on ne peut pas comparer le modèle avec débourrement avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
+# #     => on compare tous les modèles avec la DB sans NA dans debou10, si c'est moins bon on prend la DB globale sans considérer la variable debou10
+senesduree_Ldec_all = senesduree_Ldec
+# ICI le timing de débourrement ne semble pas affecter la sénescence
+senesduree_Ldec = senesduree_Ldec_all#senesduree_Ldec[!is.na(senesduree_Ldec$debou10),] #senesduree_Ldec_all
 
-AIC(#mod_senes_Ldec_debou10, 
-  mod_senes_Ldec_P_summer,mod_senes_Ldec_Tmoy_GS,mod_senes_Ldec_Tmoy_MJ,mod_senes_Ldec_Tmoy_AS,mod_senes_Ldec_Tmoy_ASO,
-  mod_senes_Ldec_Tnight21j_jsenes10,mod_senes_Ldec_Tnight30j_jsenes10,mod_senes_Ldec_Tnight40j_jsenes10,
-  mod_senes_Ldec_Tnight21j_jsenes50,mod_senes_Ldec_Tnight30j_jsenes50,mod_senes_Ldec_Tnight40j_jsenes50,
-  mod_senes_Ldec_GDDinv25_jsenes10,mod_senes_Ldec_GDDinv20_jsenes10,mod_senes_Ldec_GDDinv15_jsenes10)
-# Les températures nocturnes pendant et un peu avant sénescence donnent les meilleurs résultats (AIC = 12158.60)... on regarde en version multivariables
+mod_senesduree_Ldec_debou10 <- lmer(senesduree ~ debou10 + (1|ID_zone) + (1|yearQ), senesduree_Ldec, REML=F) 
+mod_senesduree_Ldec_P_summer <- lmer(senesduree ~ P_summer + (1|ID_zone) + (1|yearQ), senesduree_Ldec, REML=F)
+mod_senesduree_Ldec_Tmoy_GS <- lmer(senesduree ~ Tmoy_GS + (1|ID_zone) + (1|yearQ), senesduree_Ldec, REML=F)
+mod_senesduree_Ldec_Tmoy_MJ <- lmer(senesduree ~ Tmoy_MJ + (1|ID_zone) + (1|yearQ), senesduree_Ldec, REML=F)
+mod_senesduree_Ldec_Tmoy_AS <- lmer(senesduree ~ Tmoy_AS + (1|ID_zone) + (1|yearQ), senesduree_Ldec, REML=F)
+mod_senesduree_Ldec_Tmoy_ASO <- lmer(senesduree ~ Tmoy_ASO + (1|ID_zone) + (1|yearQ), senesduree_Ldec, REML=F)
+mod_senesduree_Ldec_Tnight21j_jsenes10 <- lmer(senesduree ~ Tnight21j_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Ldec, REML=F)
+mod_senesduree_Ldec_Tnight30j_jsenes10 <- lmer(senesduree ~ Tnight30j_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Ldec, REML=F)
+mod_senesduree_Ldec_Tnight40j_jsenes10 <- lmer(senesduree ~ Tnight40j_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Ldec, REML=F)
+mod_senesduree_Ldec_GDDinv25_jsenes10 <- lmer(senesduree ~ GDDinv25_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Ldec, REML=F)
+mod_senesduree_Ldec_GDDinv20_jsenes10 <- lmer(senesduree ~ GDDinv20_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Ldec, REML=F)
+mod_senesduree_Ldec_GDDinv15_jsenes10 <- lmer(senesduree ~ GDDinv15_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Ldec, REML=F)
 
+AIC(mod_senesduree_Ldec_debou10, 
+    mod_senesduree_Ldec_P_summer,mod_senesduree_Ldec_Tmoy_GS,mod_senesduree_Ldec_Tmoy_MJ,mod_senesduree_Ldec_Tmoy_AS,mod_senesduree_Ldec_Tmoy_ASO,
+    mod_senesduree_Ldec_Tnight21j_jsenes10,mod_senesduree_Ldec_Tnight30j_jsenes10,mod_senesduree_Ldec_Tnight40j_jsenes10,
+    mod_senesduree_Ldec_GDDinv25_jsenes10,mod_senesduree_Ldec_GDDinv20_jsenes10,mod_senesduree_Ldec_GDDinv15_jsenes10)
+# Pas de grande différence entre les variables testées... et le débourrement n'apporte pas grand-chose (et ça tronque 15% des données)
 
 # On peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
 summary(lmer(senesduree ~ P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
                Tnight21j_jsenes10 + Tnight30j_jsenes10 + Tnight40j_jsenes10 +
-               Tnight21j_jsenes50 + Tnight30j_jsenes50 + Tnight40j_jsenes50 +
                GDDinv25_jsenes10 + GDDinv20_jsenes10 + GDDinv15_jsenes10 +
-               (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F), corr=F)
+               (1|ID_zone) + (1|yearQ), senesduree_Ldec, REML=F), corr=F)
 # On enlève les variables une par une (en fonction des pvalues), et on regarde également l'AIC 
-# En combinant ces 2 critères (AIC et significativité des effets) :
-mod_senes_Ldec_multivar = lmer(senesduree ~ P_summer + Tnight21j_jsenes50 + 
-                                 (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F) # AIC = 12155.8
-# visreg(mod_senes_Ldec_multivar, "Tmoy_AS")
+# En combinant ces 2 critères (AIC et significativité des effets), on reste sur le modèle à une variable :
+mod_senesduree_Ldec_multivar = lmer(senesduree ~ P_summer + Tmoy_GS + Tmoy_AS + Tnight40j_jsenes10 +
+                                   (1|ID_zone) + (1|yearQ), senesduree_Ldec, REML=F) # AIC = 12125.3
+# visreg(mod_senesduree_Ldec_multivar, "Tmoy_GS")
 
-# # On peut aussi complexifier en ajoutant des interactions :
-# mod_senes_Ldec_multivar = lmer(senesduree ~ P_summer * Tnight21j_jsenes50 + 
-#                                  (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F) 
-# # -> ça n'améliore pas les modèles
 
 #*-------- 3) On complexifie le modèle ---- 
 # On teste en complexifiant le modèle [différents test à faire] :
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-bestmod_senes_Ldec = lmer(senesduree ~ P_summer + Tnight21j_jsenes50  +
-                            (1|nom_zone) + (1|yearQ), senes_Ldec, REML=F) # AIC = 12152.7
-bestmods = c(list("Meleze"=bestmod_senes_Ldec), bestmods)
+bestmod_senesduree_Ldec = lmer(senesduree ~ P_summer + Tnight21j_jsenes50  +
+                              (1|ID_zone) + (1|yearQ), senesduree_Ldec, REML=F) # AIC = 12126.8
+# Finalement retirer 2 variables supplémentaires n'améliore pas le modèle, mais c'est plus facile à interpréter et on limite la corrélation entre variables
+bestmods = c(list("Meleze"=bestmod_senesduree_Ldec), bestmods)
 
 
-summary(bestmod_senes_Ldec)
-# températures nocturnes : sénescence 0.6 jours plus courte / accélérée quand il fait 1°C plus froid
-# précipitation estivales : sénescence 0.3 jours plus longue / ralentie quand il y a 1mm de plus de précipitations.
-qqnorm(resid(bestmod_senes_Ldec))
-qqline(resid(bestmod_senes_Ldec))
+summary(bestmod_senesduree_Ldec)
+# Sénescence allongée de 1 jour pour 4 mm de pluie supplémentaire sur la période estivale
+# Sénescence allongée de 1 jour pour 2°C de plus dans les températures nocturnes
+qqnorm(resid(bestmod_senesduree_Ldec))
+qqline(resid(bestmod_senesduree_Ldec))
 # /!\ résidus !!!
 
 # Effets fixes VS tous les effets inclus
-R2_models[R2_models$species == "Meleze", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes_Ldec)
-# R2 des effets fixes très très nul !! Voire moins bien que le modèle altitude + année !
-
-# Part de variance expliquée par les différentes variables
-calcVarPart(bestmod_senes_Ldec)
+R2_models[R2_models$species == "Meleze", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senesduree_Ldec)
+# R2 des effets fixes plutôt nul !!
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_senesduree_Ldec)
+# - Validation croisée
+n = nrow(senesduree_Ldec)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senesduree_Ldec[trainIndex ,]
+test <- senesduree_Ldec[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senesduree_Ldec$ID_zone[drop=T])[!unique(senesduree_Ldec$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(bestmod_senesduree_Ldec), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Meleze", "R2_bestmod_calibval"] = summary(lm(predictions~senesduree, test2))[["adj.r.squared"]]
 
 
 resultats = rbind(resultats, data.frame(species = "Meleze",
-                                        variable = rownames(coef(summary(bestmod_senes_Ldec))),
-                                        coef = coef(summary(bestmod_senes_Ldec))[,1],
-                                        std = coef(summary(bestmod_senes_Ldec))[,2],
-                                        pval = coef(summary(bestmod_senes_Ldec))[,5],
-                                        varexpli = calcVarPart(bestmod_senes_Ldec)[rownames(coef(summary(bestmod_senes_Ldec)))]))
+                                        variable = rownames(coef(summary(bestmod_senesduree_Ldec))),
+                                        coef = coef(summary(bestmod_senesduree_Ldec))[,1],
+                                        std = coef(summary(bestmod_senesduree_Ldec))[,2],
+                                        pval = coef(summary(bestmod_senesduree_Ldec))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_senesduree_Ldec)[rownames(coef(summary(bestmod_senesduree_Ldec)))], error = function(e) return(NA))))
 
 
 
 ##############################################-
 #*---- Bouleau pubescent ----
 
-senes_Bpub = senes_Alps[senes_Alps$species == "Bouleau_pubescent",]
-# ggplot(senes_Bpub, aes(x=year)) + geom_histogram(binwidth=1) 
+senesduree_Bpub = senesduree_Alps[senesduree_Alps$species == "Bouleau_pubescent",]
+# ggplot(senesduree_Bpub, aes(x=year)) + geom_histogram(binwidth=1) 
 # # on retire les lignes où on n'a pas de données de température (2005)
-senes_Bpub = senes_Bpub[!is.na(senes_Bpub$Tmoy_GS),]
-# hist(senes_Bpub$senesduree)
-# ggplot(senes_Bpub, aes(x=year, y=senesduree)) + geom_point() + geom_smooth(method=lm) + labs(title = "Durée de la sénescence - Bouleau pubescent", x="Année",y="Durée (jours)")
-
+senesduree_Bpub = senesduree_Bpub[!is.na(senesduree_Bpub$Tmoy_GS),]
+ggplot(senesduree_Bpub, aes(x=senesduree)) + geom_histogram(binwidth=5)
 
 #*-------- 1) On regarde un modèle simple comme dans Bison et al. 2019, avec seulement altitude et année ---- 
-mod_senes_Bpub_Altyear <- lmer(senesduree ~ altitude + year + (year|nom_zone), senes_Bpub, REML=F)
-summary(mod_senes_Bpub_Altyear)
+mod_senesduree_Bpub_Altyear <- lmer(senesduree ~ altitude + year + (year|ID_zone), senesduree_Bpub, REML=F)
+summary(mod_senesduree_Bpub_Altyear)
+altyearmods = c(list("Bouleau_pubescent"=mod_senesduree_Bpub_Altyear), altyearmods)
 
 # On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
-R2_models[R2_models$species == "Bouleau_pubescent", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes_Bpub_Altyear)
+R2_models[R2_models$species == "Bouleau_pubescent", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senesduree_Bpub_Altyear)
+# + Validation croisée
+n = nrow(senesduree_Bpub)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senesduree_Bpub[trainIndex ,]
+test <- senesduree_Bpub[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senesduree_Bpub$ID_zone[drop=T])[!unique(senesduree_Bpub$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_senesduree_Bpub_Altyear), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Bouleau_pubescent", "R2_altyear_calibval"] = summary(lm(predictions~senesduree, test2))[["adj.r.squared"]]
 
 
 #*-------- 2) On teste l'effet de différentes variables climatiques à la place des variables année et altitude ---- 
 # On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
 
-# senes_Bpub = senes_Bpub[!is.na(senes_Bpub$debou10),]
-# mod_senes_Bpub_debou10 <- lmer(senesduree ~ debou10 + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F) 
-# # /!\ on ne peut pas comparer ce modèle avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
+# # /!\ on ne peut pas comparer le modèle avec débourrement avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
 # #     => on compare tous les modèles avec la DB sans NA dans debou10, si c'est moins bon on prend la DB globale sans considérer la variable debou10
-mod_senes_Bpub_P_summer <- lmer(senesduree ~ P_summer + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_Tmoy_GS <- lmer(senesduree ~ Tmoy_GS + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_Tmoy_MJ <- lmer(senesduree ~ Tmoy_MJ + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_Tmoy_AS <- lmer(senesduree ~ Tmoy_AS + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_Tmoy_ASO <- lmer(senesduree ~ Tmoy_ASO + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_Tnight21j_jsenes10 <- lmer(senesduree ~ Tnight21j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_Tnight30j_jsenes10 <- lmer(senesduree ~ Tnight30j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_Tnight40j_jsenes10 <- lmer(senesduree ~ Tnight40j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_Tnight21j_jsenes50 <- lmer(senesduree ~ Tnight21j_jsenes50 + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_Tnight30j_jsenes50 <- lmer(senesduree ~ Tnight30j_jsenes50 + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_Tnight40j_jsenes50 <- lmer(senesduree ~ Tnight40j_jsenes50 + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_GDDinv25_jsenes10 <- lmer(senesduree ~ GDDinv25_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_GDDinv20_jsenes10 <- lmer(senesduree ~ GDDinv20_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
-mod_senes_Bpub_GDDinv15_jsenes10 <- lmer(senesduree ~ GDDinv15_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F)
+senesduree_Bpub_all = senesduree_Bpub
+# ICI le timing de débourrement ne semble pas affecter la sénescence
+senesduree_Bpub = senesduree_Bpub_all# senesduree_Bpub[!is.na(senesduree_Bpub$debou10),] #senesduree_Bpub_all
 
-AIC(#mod_senes_Bpub_debou10, 
-  mod_senes_Bpub_P_summer,mod_senes_Bpub_Tmoy_GS,mod_senes_Bpub_Tmoy_MJ,mod_senes_Bpub_Tmoy_AS,mod_senes_Bpub_Tmoy_ASO,
-  mod_senes_Bpub_Tnight21j_jsenes10,mod_senes_Bpub_Tnight30j_jsenes10,mod_senes_Bpub_Tnight40j_jsenes10,
-  mod_senes_Bpub_Tnight21j_jsenes50,mod_senes_Bpub_Tnight30j_jsenes50,mod_senes_Bpub_Tnight40j_jsenes50,
-  mod_senes_Bpub_GDDinv25_jsenes10,mod_senes_Bpub_GDDinv20_jsenes10,mod_senes_Bpub_GDDinv15_jsenes10)
-# La variable précip summer donne les meilleurs résultats (AIC = 344.3094)... on regarde en version multivariables
+mod_senesduree_Bpub_debou10 <- lmer(senesduree ~ debou10 + (1|ID_zone) + (1|yearQ), senesduree_Bpub, REML=F) 
+mod_senesduree_Bpub_P_summer <- lmer(senesduree ~ P_summer + (1|ID_zone) + (1|yearQ), senesduree_Bpub, REML=F)
+mod_senesduree_Bpub_Tmoy_GS <- lmer(senesduree ~ Tmoy_GS + (1|ID_zone) + (1|yearQ), senesduree_Bpub, REML=F)
+mod_senesduree_Bpub_Tmoy_MJ <- lmer(senesduree ~ Tmoy_MJ + (1|ID_zone) + (1|yearQ), senesduree_Bpub, REML=F)
+mod_senesduree_Bpub_Tmoy_AS <- lmer(senesduree ~ Tmoy_AS + (1|ID_zone) + (1|yearQ), senesduree_Bpub, REML=F)
+mod_senesduree_Bpub_Tmoy_ASO <- lmer(senesduree ~ Tmoy_ASO + (1|ID_zone) + (1|yearQ), senesduree_Bpub, REML=F)
+mod_senesduree_Bpub_Tnight21j_jsenes10 <- lmer(senesduree ~ Tnight21j_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Bpub, REML=F)
+mod_senesduree_Bpub_Tnight30j_jsenes10 <- lmer(senesduree ~ Tnight30j_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Bpub, REML=F)
+mod_senesduree_Bpub_Tnight40j_jsenes10 <- lmer(senesduree ~ Tnight40j_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Bpub, REML=F)
+mod_senesduree_Bpub_GDDinv25_jsenes10 <- lmer(senesduree ~ GDDinv25_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Bpub, REML=F)
+mod_senesduree_Bpub_GDDinv20_jsenes10 <- lmer(senesduree ~ GDDinv20_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Bpub, REML=F)
+mod_senesduree_Bpub_GDDinv15_jsenes10 <- lmer(senesduree ~ GDDinv15_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Bpub, REML=F)
+
+AIC(mod_senesduree_Bpub_debou10, 
+    mod_senesduree_Bpub_P_summer,mod_senesduree_Bpub_Tmoy_GS,mod_senesduree_Bpub_Tmoy_MJ,mod_senesduree_Bpub_Tmoy_AS,mod_senesduree_Bpub_Tmoy_ASO,
+    mod_senesduree_Bpub_Tnight21j_jsenes10,mod_senesduree_Bpub_Tnight30j_jsenes10,mod_senesduree_Bpub_Tnight40j_jsenes10,
+    mod_senesduree_Bpub_GDDinv25_jsenes10,mod_senesduree_Bpub_GDDinv20_jsenes10,mod_senesduree_Bpub_GDDinv15_jsenes10)
+# précipitations expliquent mieux
 
 
 # On peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
-summary(lmer(senesduree ~ P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
+summary(lmer(senesduree ~ debou10 + P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
                Tnight21j_jsenes10 + Tnight30j_jsenes10 + Tnight40j_jsenes10 +
-               Tnight21j_jsenes50 + Tnight30j_jsenes50 + Tnight40j_jsenes50 +
                GDDinv25_jsenes10 + GDDinv20_jsenes10 + GDDinv15_jsenes10 +
-               (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F), corr=F)
+               (1|ID_zone) + (1|yearQ), senesduree_Bpub, REML=F), corr=F) # 
 # On enlève les variables une par une (en fonction des pvalues), et on regarde également l'AIC 
 # En combinant ces 2 critères (AIC et significativité des effets), on retient donc :
-mod_senes_Bpub_multivar = lmer(senesduree ~ P_summer  + 
-                                 (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F) # AIC = 344.3
-# visreg(mod_senes_Bpub_multivar, "GDDinv25_jsenes10")
+mod_senesduree_Bpub_multivar = lmer(senesduree ~ P_summer + 
+                                   (1|ID_zone) + (1|yearQ), senesduree_Bpub, REML=F) # AIC = 344.0
+# visreg(mod_senesduree_Bpub_multivar, "P_summer")
 
 # # On peut aussi complexifier en ajoutant des interactions :
-# # Ici ça n'améliore rien
-# mod_senes_Bpub_multivar = lmer(senesduree ~ P_summer * GDDinv25_jsenes10 + 
-#                                  (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F) 
-# # visreg(mod_senes_Bpub_multivar, "GDDinv25_jsenes10", by="P_summer")
-# visreg(mod_senes_Bpub_multivar, "P_summer", by="GDDinv25_jsenes10")
+# mod_senesduree_Bpub_multivar = lmer(senesduree ~ Tmoy_GS + 
+#                                    (1|ID_zone) + (1|yearQ), senesduree_Bpub, REML=F) # AIC = 641.3
+# # visreg(mod_senesduree_Bpub_multivar, "GDDinv25_jsenes10", by="P_summer")
+# visreg(mod_senesduree_Bpub_multivar, "P_summer", by="GDDinv25_jsenes10")
 
 
 #*-------- 3) On complexifie le modèle ---- 
@@ -1168,104 +2158,123 @@ mod_senes_Bpub_multivar = lmer(senesduree ~ P_summer  +
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-bestmod_senes_Bpub = lmer(senesduree ~ P_summer +
-                            (1|nom_zone) + (1|yearQ), senes_Bpub, REML=F) # AIC = 344.3
-bestmods = c(list("Bouleau_pubescent"=bestmod_senes_Bpub), bestmods)
-# visreg(bestmod_senes_Bpub, "P_summer")
+bestmod_senesduree_Bpub = lmer(senesduree ~ P_summer +
+                              (1|ID_zone) + (1|yearQ), senesduree_Bpub, REML=F) # AIC = 344.0
+bestmods = c(list("Bouleau_pubescent"=bestmod_senesduree_Bpub), bestmods)
 
 
-summary(bestmod_senes_Bpub)
-# précipitations : sénescence 0.8 jour plus courte quand on gagne 1mm de pluie (les précipitations estivales accélèrent la sénescence)
-# ----------- NOTE : quid des précipitations des mois suivants (août-septembre, ou que septembre, ou que octobre ?) ---------------*
+summary(bestmod_senesduree_Bpub)
+# sénescence raccourcie de 0.8 jour quand il y a 1mm de précipitations en plus dans l'été
 
-qqnorm(resid(bestmod_senes_Bpub))
-qqline(resid(bestmod_senes_Bpub))
-# résidus pas oufs !
-
+qqnorm(resid(bestmod_senesduree_Bpub))
+qqline(resid(bestmod_senesduree_Bpub))
+# résidus à peu près ok
 
 # Effets fixes VS tous les effets inclus
-R2_models[R2_models$species == "Bouleau_pubescent", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes_Bpub)
-
-# Part de variance expliquée par les différentes variables
-calcVarPart(bestmod_senes_Bpub)
+R2_models[R2_models$species == "Bouleau_pubescent", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senesduree_Bpub)
+# R2 des effets fixes très très nul !!
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_senesduree_Bpub)
+# - Validation croisée
+n = nrow(senesduree_Bpub)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senesduree_Bpub[trainIndex ,]
+test <- senesduree_Bpub[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senesduree_Bpub$ID_zone[drop=T])[!unique(senesduree_Bpub$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(bestmod_senesduree_Bpub), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Bouleau_pubescent", "R2_bestmod_calibval"] = summary(lm(predictions~senesduree, test2))[["adj.r.squared"]]
 
 
 resultats = rbind(resultats, data.frame(species = "Bouleau_pubescent",
-                                        variable = rownames(coef(summary(bestmod_senes_Bpub))),
-                                        coef = coef(summary(bestmod_senes_Bpub))[,1],
-                                        std = coef(summary(bestmod_senes_Bpub))[,2],
-                                        pval = coef(summary(bestmod_senes_Bpub))[,5],
-                                        varexpli = calcVarPart(bestmod_senes_Bpub)[rownames(coef(summary(bestmod_senes_Bpub)))]))
+                                        variable = rownames(coef(summary(bestmod_senesduree_Bpub))),
+                                        coef = coef(summary(bestmod_senesduree_Bpub))[,1],
+                                        std = coef(summary(bestmod_senesduree_Bpub))[,2],
+                                        pval = coef(summary(bestmod_senesduree_Bpub))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_senesduree_Bpub)[rownames(coef(summary(bestmod_senesduree_Bpub)))], error = function(e) return(NA))))
 
 
 
 ##############################################-
 #*---- Hetre ----
 
-senes_Fsyl = senes_Alps[senes_Alps$species == "Hetre",]
-# ggplot(senes_Fsyl, aes(x=year)) + geom_histogram(binwidth=1) 
+senesduree_Fsyl = senesduree_Alps[senesduree_Alps$species == "Hetre",]
+# ggplot(senesduree_Fsyl, aes(x=year)) + geom_histogram(binwidth=1) 
 # # on retire les lignes où on n'a pas de données de température (2005)
-senes_Fsyl = senes_Fsyl[!is.na(senes_Fsyl$Tmoy_GS),]
-# hist(senes_Fsyl$senesduree)
-# ggplot(senes_Fsyl, aes(x=year, y=senesduree)) + geom_point() + geom_smooth(method=lm) + labs(title = "Durée de la sénescence - Hetre", x="Année",y="Durée (jours)")
-
+senesduree_Fsyl = senesduree_Fsyl[!is.na(senesduree_Fsyl$Tmoy_GS),]
+ggplot(senesduree_Fsyl, aes(x=senesduree)) + geom_histogram(binwidth=5)
+ggplot(senesduree_Fsyl, aes(x=year, y=senesduree)) + geom_point()
+# Une valeur sort du lot... on peut la retirer ? C'est une obs du CREA !! (zone Fouine - arbre 14006 en 2023)
+senesduree_Fsyl = senesduree_Fsyl[senesduree_Fsyl$senesduree < 65,]
 
 #*-------- 1) On regarde un modèle simple comme dans Bison et al. 2019, avec seulement altitude et année ---- 
-mod_senes_Fsyl_Altyear <- lmer(senesduree ~ altitude + year + (year|nom_zone), senes_Fsyl, REML=F)
-summary(mod_senes_Fsyl_Altyear)
+mod_senesduree_Fsyl_Altyear <- lmer(senesduree ~ altitude + year + (year|ID_zone), senesduree_Fsyl, REML=F)
+summary(mod_senesduree_Fsyl_Altyear)
 
 # On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
-R2_models[R2_models$species == "Hetre", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes_Fsyl_Altyear)
+R2_models[R2_models$species == "Hetre", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senesduree_Fsyl_Altyear)
+# + Validation croisée
+n = nrow(senesduree_Fsyl)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senesduree_Fsyl[trainIndex ,]
+test <- senesduree_Fsyl[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senesduree_Fsyl$ID_zone[drop=T])[!unique(senesduree_Fsyl$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_senesduree_Fsyl_Altyear), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Hetre", "R2_altyear_calibval"] = summary(lm(predictions~senesduree, test2))[["adj.r.squared"]]
 
 
 #*-------- 2) On teste l'effet de différentes variables climatiques à la place des variables année et altitude ---- 
 # On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
 
-# senes_Fsyl = senes_Fsyl[!is.na(senes_Fsyl$debou10),]
-# mod_senes_Fsyl_debou10 <- lmer(senesduree ~ debou10 + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-# # /!\ on ne peut pas comparer ce modèle avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
+# # /!\ on ne peut pas comparer le modèle avec débourrement avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
 # #     => on compare tous les modèles avec la DB sans NA dans debou10, si c'est moins bon on prend la DB globale sans considérer la variable debou10
-mod_senes_Fsyl_P_summer <- lmer(senesduree ~ P_summer + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_Tmoy_GS <- lmer(senesduree ~ Tmoy_GS + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_Tmoy_MJ <- lmer(senesduree ~ Tmoy_MJ + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_Tmoy_AS <- lmer(senesduree ~ Tmoy_AS + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_Tmoy_ASO <- lmer(senesduree ~ Tmoy_ASO + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_Tnight21j_jsenes10 <- lmer(senesduree ~ Tnight21j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_Tnight30j_jsenes10 <- lmer(senesduree ~ Tnight30j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_Tnight40j_jsenes10 <- lmer(senesduree ~ Tnight40j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_Tnight21j_jsenes50 <- lmer(senesduree ~ Tnight21j_jsenes50 + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_Tnight30j_jsenes50 <- lmer(senesduree ~ Tnight30j_jsenes50 + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_Tnight40j_jsenes50 <- lmer(senesduree ~ Tnight40j_jsenes50 + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_GDDinv25_jsenes10 <- lmer(senesduree ~ GDDinv25_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_GDDinv20_jsenes10 <- lmer(senesduree ~ GDDinv20_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
-mod_senes_Fsyl_GDDinv15_jsenes10 <- lmer(senesduree ~ GDDinv15_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F)
+senesduree_Fsyl_all = senesduree_Fsyl
+# ICI le timing de débourrement ne semble pas affecter la sénescence
+senesduree_Fsyl = senesduree_Fsyl_all#senesduree_Fsyl[!is.na(senesduree_Fsyl$debou10),] #senesduree_Fsyl_all
 
-AIC(#mod_senes_Fsyl_debou10, 
-  mod_senes_Fsyl_P_summer,mod_senes_Fsyl_Tmoy_GS,mod_senes_Fsyl_Tmoy_MJ,mod_senes_Fsyl_Tmoy_AS,mod_senes_Fsyl_Tmoy_ASO,
-  mod_senes_Fsyl_Tnight21j_jsenes10,mod_senes_Fsyl_Tnight30j_jsenes10,mod_senes_Fsyl_Tnight40j_jsenes10,
-  mod_senes_Fsyl_Tnight21j_jsenes50,mod_senes_Fsyl_Tnight30j_jsenes50,mod_senes_Fsyl_Tnight40j_jsenes50,
-  mod_senes_Fsyl_GDDinv25_jsenes10,mod_senes_Fsyl_GDDinv20_jsenes10,mod_senes_Fsyl_GDDinv15_jsenes10)
-# La variable précipitations estivales donne les meilleurs résultats (AIC = 434.0872)... on regarde en version multivariables
+mod_senesduree_Fsyl_debou10 <- lmer(senesduree ~ debou10 + (1|ID_zone) + (1|yearQ), senesduree_Fsyl, REML=F) 
+mod_senesduree_Fsyl_P_summer <- lmer(senesduree ~ P_summer + (1|ID_zone) + (1|yearQ), senesduree_Fsyl, REML=F)
+mod_senesduree_Fsyl_Tmoy_GS <- lmer(senesduree ~ Tmoy_GS + (1|ID_zone) + (1|yearQ), senesduree_Fsyl, REML=F)
+mod_senesduree_Fsyl_Tmoy_MJ <- lmer(senesduree ~ Tmoy_MJ + (1|ID_zone) + (1|yearQ), senesduree_Fsyl, REML=F)
+mod_senesduree_Fsyl_Tmoy_AS <- lmer(senesduree ~ Tmoy_AS + (1|ID_zone) + (1|yearQ), senesduree_Fsyl, REML=F)
+mod_senesduree_Fsyl_Tmoy_ASO <- lmer(senesduree ~ Tmoy_ASO + (1|ID_zone) + (1|yearQ), senesduree_Fsyl, REML=F)
+mod_senesduree_Fsyl_Tnight21j_jsenes10 <- lmer(senesduree ~ Tnight21j_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Fsyl, REML=F)
+mod_senesduree_Fsyl_Tnight30j_jsenes10 <- lmer(senesduree ~ Tnight30j_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Fsyl, REML=F)
+mod_senesduree_Fsyl_Tnight40j_jsenes10 <- lmer(senesduree ~ Tnight40j_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Fsyl, REML=F)
+mod_senesduree_Fsyl_GDDinv25_jsenes10 <- lmer(senesduree ~ GDDinv25_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Fsyl, REML=F)
+mod_senesduree_Fsyl_GDDinv20_jsenes10 <- lmer(senesduree ~ GDDinv20_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Fsyl, REML=F)
+mod_senesduree_Fsyl_GDDinv15_jsenes10 <- lmer(senesduree ~ GDDinv15_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Fsyl, REML=F)
+
+AIC(mod_senesduree_Fsyl_debou10, 
+    mod_senesduree_Fsyl_P_summer,mod_senesduree_Fsyl_Tmoy_GS,mod_senesduree_Fsyl_Tmoy_MJ,mod_senesduree_Fsyl_Tmoy_AS,mod_senesduree_Fsyl_Tmoy_ASO,
+    mod_senesduree_Fsyl_Tnight21j_jsenes10,mod_senesduree_Fsyl_Tnight30j_jsenes10,mod_senesduree_Fsyl_Tnight40j_jsenes10,
+    mod_senesduree_Fsyl_GDDinv25_jsenes10,mod_senesduree_Fsyl_GDDinv20_jsenes10,mod_senesduree_Fsyl_GDDinv15_jsenes10)
+# Précip meilleur + debou intéressant aussi
 
 
 # On peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
-summary(lmer(senesduree ~ P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
+summary(lmer(senesduree ~ debou10 + P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
                Tnight21j_jsenes10 + Tnight30j_jsenes10 + Tnight40j_jsenes10 +
-               Tnight21j_jsenes50 + Tnight30j_jsenes50 + Tnight40j_jsenes50 +
                GDDinv25_jsenes10 + GDDinv20_jsenes10 + GDDinv15_jsenes10 +
-               (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F), corr=F)
+               (1|ID_zone) + (1|yearQ), senesduree_Fsyl, REML=F), corr=F)
 # On enlève les variables une par une (en fonction des pvalues), et on regarde également l'AIC 
-# En combinant ces 2 critères (AIC et significativité des effets), on retient donc :
-mod_senes_Fsyl_multivar = lmer(senesduree ~ Tmoy_ASO + 
-                                 Tnight21j_jsenes50 + 
-                                 (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F) # AIC = 426.6
+# En enlevant les points où on n'a pas d'info de débourrement, on n'enlève que 4 données (8%) = acceptable
 
-# # On peut aussi complexifier en ajoutant des interactions :
-# # Ici ça n'améliore rien
-# mod_senes_Fsyl_multivar = lmer(senesduree ~ Tnight21j_jsenes50 * Tmoy_ASO + 
-#                                  (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F) 
-# # visreg(mod_senes_Fsyl_multivar, "Tmoy_AS", by="P_summer")
-# # visreg(mod_senes_Fsyl_multivar, "P_summer", by="Tmoy_AS")
+# En combinant ces 2 critères (AIC et significativité des effets), on retient donc :
+mod_senesduree_Fsyl_multivar = lmer(senesduree ~ debou10 + P_summer +
+                                   (1|ID_zone) + (1|yearQ), senesduree_Fsyl, REML=F) # AIC = 342.7
+# visreg(mod_senesduree_Fsyl_multivar, "GDDinv25_jsenes10")
+
+# On peut aussi complexifier en ajoutant des interactions :
+mod_senesduree_Fsyl_multivar = lmer(senesduree ~ P_summer * debou10 +
+                                   (1|ID_zone) + (1|yearQ), senesduree_Fsyl, REML=F) # AIC = 339.7
+# visreg(mod_senesduree_Fsyl_multivar, "debou10", by="P_summer")
+# visreg(mod_senesduree_Fsyl_multivar, "P_summer", by="Tmoy_AS")
 
 
 #*-------- 3) On complexifie le modèle ---- 
@@ -1273,101 +2282,122 @@ mod_senes_Fsyl_multivar = lmer(senesduree ~ Tmoy_ASO +
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-# Ici ça n'améliore pas grand chose, on reste sur le modèle plus simple
-bestmod_senes_Fsyl = lmer(senesduree ~ Tnight21j_jsenes50 + Tmoy_ASO + 
-                            (1|nom_zone) + (1|yearQ), senes_Fsyl, REML=F) # AIC = 426.6
-bestmods = c(list("Hetre"=bestmod_senes_Fsyl), bestmods)
-# visreg(bestmod_senes_Fsyl, "P_summer", by="Tmoy_AS")
-# visreg(bestmod_senes_Fsyl, "Tmoy_AS", by="P_summer")
+bestmod_senesduree_Fsyl = lmer(senesduree ~ P_summer * debou10 +
+                              (1|ID_zone) + (1|yearQ), senesduree_Fsyl, REML=F) # AIC = 339.7
+bestmods = c(list("Hetre"=bestmod_senesduree_Fsyl), bestmods)
+# visreg(bestmod_senesduree_Fsyl, "P_summer", by="Tmoy_AS")
+# visreg(bestmod_senesduree_Fsyl, "Tmoy_AS", by="P_summer")
 
 
-summary(bestmod_senes_Fsyl)
-# températures nocturnes : sénescence 9.2 jours plus longue / ralentie quand on gagne 1°C
-# chaleur de fin de saison (août-septembre-octobre) : sénescence raccourcie / accélérée de 11.1 jours quand on gagne 1°C
+summary(bestmod_senesduree_Fsyl)
+# précipitations : sénescence 28 jours plus tôt quand on gagne 1mm de pluie
+# chaleur de fin de saison (août-septembre) : sénescence 20 jours plus tard quand on gagne 1°C (retard d'autant plus fort qu'il fait sec)
+# /!\ ça me semble beaucoup ces chiffres !!!
 
-qqnorm(resid(bestmod_senes_Fsyl))
-qqline(resid(bestmod_senes_Fsyl))
+qqnorm(resid(bestmod_senesduree_Fsyl))
+qqline(resid(bestmod_senesduree_Fsyl))
 # résidus pas oufs !
 
 
 # Effets fixes VS tous les effets inclus
-R2_models[R2_models$species == "Hetre", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes_Fsyl)
-
-# Part de variance expliquée par les différentes variables
-calcVarPart(bestmod_senes_Fsyl)
+R2_models[R2_models$species == "Hetre", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senesduree_Fsyl)
+# R2 des effets fixes très très nul !!
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_senesduree_Fsyl)
+# - Validation croisée
+n = nrow(senesduree_Fsyl)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senesduree_Fsyl[trainIndex ,]
+test <- senesduree_Fsyl[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senesduree_Fsyl$ID_zone[drop=T])[!unique(senesduree_Fsyl$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(bestmod_senesduree_Fsyl), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+# # R2 ajusté = 0.7489
+R2_models[R2_models$species == "Hetre", "R2_bestmod_calibval"] = summary(lm(predictions~senesduree, test2))[["adj.r.squared"]]
 
 
 resultats = rbind(resultats, data.frame(species = "Hetre",
-                                        variable = rownames(coef(summary(bestmod_senes_Fsyl))),
-                                        coef = coef(summary(bestmod_senes_Fsyl))[,1],
-                                        std = coef(summary(bestmod_senes_Fsyl))[,2],
-                                        pval = coef(summary(bestmod_senes_Fsyl))[,5],
-                                        varexpli = calcVarPart(bestmod_senes_Fsyl)[rownames(coef(summary(bestmod_senes_Fsyl)))]))
+                                        variable = rownames(coef(summary(bestmod_senesduree_Fsyl))),
+                                        coef = coef(summary(bestmod_senesduree_Fsyl))[,1],
+                                        std = coef(summary(bestmod_senesduree_Fsyl))[,2],
+                                        pval = coef(summary(bestmod_senesduree_Fsyl))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_senesduree_Fsyl)[rownames(coef(summary(bestmod_senesduree_Fsyl)))], error = function(e) return(NA))))
 
 
 
 ##############################################-
 #*---- Sorbier ----
 
-senes_Sacu = senes_Alps[senes_Alps$species == "Sorbier",]
-# ggplot(senes_Sacu, aes(x=year)) + geom_histogram(binwidth=1) 
+senesduree_Sacu = senesduree_Alps[senesduree_Alps$species == "Sorbier",]
+# ggplot(senesduree_Sacu, aes(x=year)) + geom_histogram(binwidth=1) 
 # # on retire les lignes où on n'a pas de données de température (2005)
-senes_Sacu = senes_Sacu[!is.na(senes_Sacu$Tmoy_GS),]
-# hist(senes_Sacu$senesduree)
+senesduree_Sacu = senesduree_Sacu[!is.na(senesduree_Sacu$Tmoy_GS),]
+ggplot(senesduree_Sacu, aes(x=senesduree)) + geom_histogram(binwidth=5)
 
 #*-------- 1) On regarde un modèle simple comme dans Bison et al. 2019, avec seulement altitude et année ---- 
-mod_senes_Sacu_Altyear <- lmer(senesduree ~ altitude + year + (year|nom_zone), senes_Sacu, REML=F)
-summary(mod_senes_Sacu_Altyear)
+mod_senesduree_Sacu_Altyear <- lmer(senesduree ~ altitude + year + (year|ID_zone), senesduree_Sacu, REML=F)
+summary(mod_senesduree_Sacu_Altyear)
 
 # On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
-R2_models[R2_models$species == "Sorbier", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senes_Sacu_Altyear)
+R2_models[R2_models$species == "Sorbier", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_senesduree_Sacu_Altyear)
+# + Validation croisée
+n = nrow(senesduree_Sacu)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senesduree_Sacu[trainIndex ,]
+test <- senesduree_Sacu[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senesduree_Sacu$ID_zone[drop=T])[!unique(senesduree_Sacu$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_senesduree_Sacu_Altyear), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Sorbier", "R2_altyear_calibval"] = summary(lm(predictions~senesduree, test2))[["adj.r.squared"]]
 
 
 #*-------- 2) On teste l'effet de différentes variables climatiques à la place des variables année et altitude ---- 
 # On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
 
-# senes_Sacu = senes_Sacu[!is.na(senes_Sacu$debou10),]
-# mod_senes_Sacu_debou10 <- lmer(senesduree ~ debou10 + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-# # /!\ on ne peut pas comparer ce modèle avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
+# # /!\ on ne peut pas comparer le modèle avec débourrement avec les autres puisqu'il n'y a pas le même nombre de données en entrée (cf NA dans debou10)
 # #     => on compare tous les modèles avec la DB sans NA dans debou10, si c'est moins bon on prend la DB globale sans considérer la variable debou10
-mod_senes_Sacu_P_summer <- lmer(senesduree ~ P_summer + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_Tmoy_GS <- lmer(senesduree ~ Tmoy_GS + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_Tmoy_MJ <- lmer(senesduree ~ Tmoy_MJ + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_Tmoy_AS <- lmer(senesduree ~ Tmoy_AS + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_Tmoy_ASO <- lmer(senesduree ~ Tmoy_ASO + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_Tnight21j_jsenes10 <- lmer(senesduree ~ Tnight21j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_Tnight30j_jsenes10 <- lmer(senesduree ~ Tnight30j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_Tnight40j_jsenes10 <- lmer(senesduree ~ Tnight40j_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_Tnight21j_jsenes50 <- lmer(senesduree ~ Tnight21j_jsenes50 + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_Tnight30j_jsenes50 <- lmer(senesduree ~ Tnight30j_jsenes50 + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_Tnight40j_jsenes50 <- lmer(senesduree ~ Tnight40j_jsenes50 + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_GDDinv25_jsenes10 <- lmer(senesduree ~ GDDinv25_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_GDDinv20_jsenes10 <- lmer(senesduree ~ GDDinv20_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
-mod_senes_Sacu_GDDinv15_jsenes10 <- lmer(senesduree ~ GDDinv15_jsenes10 + (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F)
+senesduree_Sacu_all = senesduree_Sacu
+# ICI le timing de débourrement ne semble pas affecter la sénescence
+senesduree_Sacu = senesduree_Sacu_all# senesduree_Sacu[!is.na(senesduree_Sacu$debou10),] #senesduree_Sacu_all
 
-AIC(#mod_senes_Sacu_debou10, 
-  mod_senes_Sacu_P_summer,mod_senes_Sacu_Tmoy_GS,mod_senes_Sacu_Tmoy_MJ,mod_senes_Sacu_Tmoy_AS,mod_senes_Sacu_Tmoy_ASO,
-  mod_senes_Sacu_Tnight21j_jsenes10,mod_senes_Sacu_Tnight30j_jsenes10,mod_senes_Sacu_Tnight40j_jsenes10,
-  mod_senes_Sacu_Tnight21j_jsenes50,mod_senes_Sacu_Tnight30j_jsenes50,mod_senes_Sacu_Tnight40j_jsenes50,
-  mod_senes_Sacu_GDDinv25_jsenes10,mod_senes_Sacu_GDDinv20_jsenes10,mod_senes_Sacu_GDDinv15_jsenes10)
-# Les variables de température nocturne donnent les meilleurs résultats (AIC = 4229.620)...
-# on regarde en version multivariables
+mod_senesduree_Sacu_debou10 <- lmer(senesduree ~ debou10 + (1|ID_zone) + (1|yearQ), senesduree_Sacu, REML=F) 
+mod_senesduree_Sacu_P_summer <- lmer(senesduree ~ P_summer + (1|ID_zone) + (1|yearQ), senesduree_Sacu, REML=F)
+mod_senesduree_Sacu_Tmoy_GS <- lmer(senesduree ~ Tmoy_GS + (1|ID_zone) + (1|yearQ), senesduree_Sacu, REML=F)
+mod_senesduree_Sacu_Tmoy_MJ <- lmer(senesduree ~ Tmoy_MJ + (1|ID_zone) + (1|yearQ), senesduree_Sacu, REML=F)
+mod_senesduree_Sacu_Tmoy_AS <- lmer(senesduree ~ Tmoy_AS + (1|ID_zone) + (1|yearQ), senesduree_Sacu, REML=F)
+mod_senesduree_Sacu_Tmoy_ASO <- lmer(senesduree ~ Tmoy_ASO + (1|ID_zone) + (1|yearQ), senesduree_Sacu, REML=F)
+mod_senesduree_Sacu_Tnight21j_jsenes10 <- lmer(senesduree ~ Tnight21j_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Sacu, REML=F)
+mod_senesduree_Sacu_Tnight30j_jsenes10 <- lmer(senesduree ~ Tnight30j_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Sacu, REML=F)
+mod_senesduree_Sacu_Tnight40j_jsenes10 <- lmer(senesduree ~ Tnight40j_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Sacu, REML=F)
+mod_senesduree_Sacu_GDDinv25_jsenes10 <- lmer(senesduree ~ GDDinv25_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Sacu, REML=F)
+mod_senesduree_Sacu_GDDinv20_jsenes10 <- lmer(senesduree ~ GDDinv20_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Sacu, REML=F)
+mod_senesduree_Sacu_GDDinv15_jsenes10 <- lmer(senesduree ~ GDDinv15_jsenes10 + (1|ID_zone) + (1|yearQ), senesduree_Sacu, REML=F)
+
+AIC(mod_senesduree_Sacu_debou10, 
+    mod_senesduree_Sacu_P_summer,mod_senesduree_Sacu_Tmoy_GS,mod_senesduree_Sacu_Tmoy_MJ,mod_senesduree_Sacu_Tmoy_AS,mod_senesduree_Sacu_Tmoy_ASO,
+    mod_senesduree_Sacu_Tnight21j_jsenes10,mod_senesduree_Sacu_Tnight30j_jsenes10,mod_senesduree_Sacu_Tnight40j_jsenes10,
+    mod_senesduree_Sacu_GDDinv25_jsenes10,mod_senesduree_Sacu_GDDinv20_jsenes10,mod_senesduree_Sacu_GDDinv15_jsenes10)
+# debou semble intéressant, ainsi que T
 
 
 # On peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
-summary(lmer(senesduree ~ P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
+summary(lmer(senesduree ~ debou10 + P_summer + Tmoy_GS + Tmoy_MJ + Tmoy_AS + Tmoy_ASO + 
                Tnight21j_jsenes10 + Tnight30j_jsenes10 + Tnight40j_jsenes10 +
-               Tnight21j_jsenes50 + Tnight30j_jsenes50 + Tnight40j_jsenes50 +
                GDDinv25_jsenes10 + GDDinv20_jsenes10 + GDDinv15_jsenes10 +
-               (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F), corr=F)
+               (1|ID_zone) + (1|yearQ), senesduree_Sacu, REML=F), corr=F)
 # On enlève les variables une par une (en fonction des pvalues), et on regarde également l'AIC 
 # En combinant ces 2 critères (AIC et significativité des effets), on retient donc :
-mod_senes_Sacu_multivar = lmer(senesduree ~  P_summer +
-                                 Tnight21j_jsenes10 +
-                                 (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F) # AIC = 4225.5 
-# visreg(mod_senes_Sacu_multivar, "GDDinv25_jsenes10")
+mod_senesduree_Sacu_multivar = lmer(senesduree ~ debou10 +
+                                   (1|ID_zone) + (1|yearQ), senesduree_Sacu, REML=F) # AIC = 3640.4 # /!\ en ayant ajouté debou10, on tronque la base de données de 14% !
+# visreg(mod_senesduree_Sacu_multivar, "GDDinv25_jsenes10")
 
-# On peut aussi complexifier en ajoutant des interactions (ici ça n'améliore rien) 
+# # On peut aussi complexifier en ajoutant des interactions 
+# mod_senesduree_Sacu_multivar = lmer(senesduree ~ debou10 +
+#                                    (1|ID_zone) + (1|yearQ), senesduree_Sacu, REML=F) # AIC = 3640.4
 
 
 #*-------- 3) On complexifie le modèle ---- 
@@ -1375,41 +2405,61 @@ mod_senes_Sacu_multivar = lmer(senesduree ~  P_summer +
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-bestmod_senes_Sacu = lmer(senesduree ~ P_summer +
-                            Tnight21j_jsenes10 +
-                            (1|nom_zone) + (1|yearQ), senes_Sacu, REML=F) # AIC = 4225.5
-# Ici l'altitude n'améliore rien, et l'interaction température/année via l'effet aléatoire ne permet plus au modèle de converger
-bestmods = c(list("Sorbier"=bestmod_senes_Sacu), bestmods)
-# visreg(bestmod_senes_Sacu, "P_summer", by="Tmoy_AS")
-# visreg(bestmod_senes_Sacu, "Tmoy_AS", by="P_summer")
+bestmod_senesduree_Sacu = lmer(senesduree ~ debou10 +
+                              (1|ID_zone) + (1|yearQ), senesduree_Sacu, REML=F) # AIC = 3640.4
+# Ici l'altitude n'améliore rien, MAIS en mettant la date de débourrement en variable explicative on tronque la base de données
+bestmods = c(list("Sorbier"=bestmod_senesduree_Sacu), bestmods)
+# visreg(bestmod_senesduree_Sacu, "P_summer", by="Tmoy_AS")
+# visreg(bestmod_senesduree_Sacu, "Tmoy_AS", by="P_summer")
 
 
-summary(bestmod_senes_Sacu)
-# températures nocturnes un peu avant la sénescence : sénescence rallongée / ralentie de 0.7 jours quand on gagne 1°C en moyenne la nuit
-# précipitations estivales : sénescence rallongée / ralentie de 0.3 jour quand on gagne 1mm de pluie en été
+summary(bestmod_senesduree_Sacu)
+# températures nocturnes un peu avant la sénescence : sénescence 1.5 jours plus tard quand on gagne 1°C en moyenne la nuit
+# accumulation de froid (pas vraiment significatif !) : sénescence 1.1 jour plus tard quand on gagne 1°C de froid
+# quand le débourrement est plus tardif d'une semaine, la sénescence est retardée d'1 jour seulement
 
-qqnorm(resid(bestmod_senes_Sacu))
-qqline(resid(bestmod_senes_Sacu))
-# résidus bifbof !
+qqnorm(resid(bestmod_senesduree_Sacu))
+qqline(resid(bestmod_senesduree_Sacu))
+# résidus quasi ok !
 
 
 # Effets fixes VS tous les effets inclus
-R2_models[R2_models$species == "Sorbier", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senes_Sacu)
+R2_models[R2_models$species == "Sorbier", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_senesduree_Sacu)
+# R2 des effets fixes très très nul !!
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_senesduree_Sacu)
+# - Validation croisée
+n = nrow(senesduree_Sacu)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- senesduree_Sacu[trainIndex ,]
+test <- senesduree_Sacu[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(senesduree_Sacu$ID_zone[drop=T])[!unique(senesduree_Sacu$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(bestmod_senesduree_Sacu), train)
+predictions <- mod_train %>% predict(test1) # BUG !!!
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+R2_models[R2_models$species == "Sorbier", "R2_bestmod_calibval"] = summary(lm(predictions~senesduree, test2))[["adj.r.squared"]]
 
-# Part de variance expliquée par les différentes variables
-calcVarPart(bestmod_senes_Sacu)
 
 
 resultats = rbind(resultats, data.frame(species = "Sorbier",
-                                        variable = rownames(coef(summary(bestmod_senes_Sacu))),
-                                        coef = coef(summary(bestmod_senes_Sacu))[,1],
-                                        std = coef(summary(bestmod_senes_Sacu))[,2],
-                                        pval = coef(summary(bestmod_senes_Sacu))[,5],
-                                        varexpli = calcVarPart(bestmod_senes_Sacu)[rownames(coef(summary(bestmod_senes_Sacu)))]))
+                                        variable = rownames(coef(summary(bestmod_senesduree_Sacu))),
+                                        coef = coef(summary(bestmod_senesduree_Sacu))[,1],
+                                        std = coef(summary(bestmod_senesduree_Sacu))[,2],
+                                        pval = coef(summary(bestmod_senesduree_Sacu))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_senesduree_Sacu)[rownames(coef(summary(bestmod_senesduree_Sacu)))], error = function(e) return(NA))))
 
 
 
 write.csv(resultats[-1,], "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resultats_modeles_senesduree__coeff.csv", row.names = F)
 write.csv(R2_models[!is.na(R2_models$R2_bestmod_fixef),], "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resultats_modeles_senesduree__R2.csv", row.names = F)
 save(bestmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/bestmods_senesduree.Rdata")
+save(altyearmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/mods_senesduree_v1altyear.Rdata")
+
+
+
+
+
+
+
 

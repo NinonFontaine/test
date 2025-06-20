@@ -14,6 +14,7 @@ library(brms)
 # library(ciTools)
 
 library(rinat)
+library(terra)
 
 
 #########################################################################################*
@@ -41,7 +42,17 @@ data_parQ <- data_long %>%
   pivot_wider(names_from = etape, values_from = value, names_prefix = "stage")
 
 data_parQ$counts = rowSums(data_parQ[grep("stage", colnames(data_parQ))], na.rm = T)
-data_parQ$visit_date = as.Date(data_parQ$visit_date, format="%d/%m/%Y")
+data_parQ$visit_date = as.Date(data_parQ$visit_date, format="%Y-%m-%d")
+
+# Résumé des données récoltées 
+recap = data_parQ %>% group_by(year(visit_date)) %>% summarise(nb_sites = length(unique(id_site)),
+                                                               nb_visites = length(unique(id_base_visit)),
+                                                               nb_boutons = sum(stage1, na.rm=T),
+                                                               nb_fleursouvertes = sum(stage2, na.rm=T),
+                                                               nb_fleursfanees = sum(stage3, na.rm=T),
+                                                               nb_fruitsmurs = sum(stage4, na.rm=T))
+recap = recap %>% rename("annee" = `year(visit_date)`)
+recap$TOTAL = rowSums(recap[grep("nb", colnames(recap))])
 
 
 # Calcul des proportions de chaque stade pour chaque quadrat-date

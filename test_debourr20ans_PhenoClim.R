@@ -1,6 +1,6 @@
 ##############################################-
 # ANALYSE DES 20 ANS DE DONNÉES PHÉNOCLIM  ----
-#  Ninon Fontaine - février 2025              -
+#  Ninon Fontaine - printemps 2025            -
 ##############################################-
 
 
@@ -64,7 +64,7 @@ map_base_MtBlc <- get_map(location = c(lon = 6.8, lat = 45.95), zoom = 11,
 
 #---- Données Phénoclim
 # phenoclim = read.csv("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/Phenoclim_data_cleaned.csv") 
-phenoclim = read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/05. TRANSVERSAUX/01. RECHERCHE/06. ANALYSES/Phenoclim/data/_CLEANED_data_pheno.csv")
+phenoclim = read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/05. RECHERCHE/06. ANALYSES/Phenoclim/data/_CLEANED_data_pheno.csv")
 # Données obtenues avec le script 1_mise_en_forme_BDD.R
 
 
@@ -73,11 +73,36 @@ phenoclim = read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/05. TRA
 ############################################################################################-
 
 stades = grep("Ok 10%",unique(phenoclim$pheno_etape_value), value = T)
+
+# En prenant toutes les données
 resume_stadeesp = phenoclim %>% filter(pheno_etape_value %in% stades) %>% group_by(species, year, pheno_stade_value, pheno_etape_value) %>%
   summarise(nb_obs = length(julian_day),
             julian_day = mean(julian_day))
 resume_stadeesp$date_moyenne = as.Date(resume_stadeesp$julian_day, origin = paste0(resume_stadeesp$year,"-01-01"))
 write.csv(resume_stadeesp, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resume_datepheno_paresp.csv")
+
+ggplot(resume_stadeesp, aes(x=julian_day, y=year, col=pheno_stade_value)) + geom_point() + facet_wrap(~ species) + 
+  scale_color_manual(values = list("Débourrement" = "royalblue3", "Floraison" = "skyblue2", "Feuillaison" = "olivedrab3", "Changement couleur"="chocolate2")) +
+  scale_x_continuous(breaks= c(79,171,263), labels=c("mars","juin","sept.")) + 
+  labs(x="", y="")+
+  theme(legend.position = "none", 
+        panel.background = element_blank(),
+        panel.border = element_blank(),  
+        panel.grid.major.y = element_line(linewidth = 0.5, linetype = 'solid', colour = "grey"), 
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.ticks = element_blank())
+
+# Pour une zone en particulier
+zone_ENS = vect("/Users/ninonfontaine/Desktop/projetsR/TEST/data/_lim_admin/lim_zone_ENS_exemple/limite_ens.shp")
+zone_ENS_buffer5km = buffer(zone_ENS, 5000)
+phenoclim_ENS = phenoclim[!is.na(terra::extract(zone_ENS_buffer5km, vect(phenoclim, geom=c("coord_x_4326","coord_y_4326"), "epsg:4326"))$NOM.SITE),]
+
+resume_stadeesp = phenoclim_ENS %>% filter(pheno_etape_value %in% stades) %>% filter(pheno_etape_value %in% stades) %>% group_by(species, year, pheno_stade_value, pheno_etape_value) %>%
+  summarise(nb_obs = length(julian_day),
+            julian_day = mean(julian_day))
+resume_stadeesp$date_moyenne = as.Date(resume_stadeesp$julian_day, origin = paste0(resume_stadeesp$year,"-01-01"))
+write.csv(resume_stadeesp, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resume_datepheno_paresp_zoneENSGresivaudan.csv")
 
 ggplot(resume_stadeesp, aes(x=julian_day, y=year, col=pheno_stade_value)) + geom_point() + facet_wrap(~ species) + 
   scale_color_manual(values = list("Débourrement" = "royalblue3", "Floraison" = "skyblue2", "Feuillaison" = "olivedrab3", "Changement couleur"="chocolate2")) +
@@ -231,7 +256,7 @@ ggplot(resume_stadeesp, aes(x=julian_day, y=year, col=pheno_stade_value)) + geom
 #   geom_line(aes(x=date, y=Tair_max, group=station_name), col="red", linetype=2) + 
 #   xlim(as.Date(c("15/02/2023","15/04/2023"), format = "%d/%m/%Y"))
 
-#*------------ Récupération des données météo reconstruites et calcul de variable pertinente pour la phénologie ----
+#*------------ Récupération des données météo reconstruites et calcul de variables pertinentes pour la phénologie ----
 
 # # Ces données reconstruites sont résumées en Tmin, Tmoy, Tmax par jour et par site, pour chaque année
 # # (Cela représente 3503 sites x 365 jours...)
@@ -449,12 +474,12 @@ dates_deb_med = debourr_Alps %>% group_by(species) %>%
 # Construction d'un tableau sur le débourrement dans les Alpes, où chaque donnée (site x année) est associée à une valeur de température supposée
 # pertinente pour la phénologie : la température moyenne pendant les 30 jours précédant la date de débourrement.
 
-varTselec = c("Tmoy30j","Tmoy40j","Tmoy50j","GDD0","GDD5","Tmoyhiv","dChill")
+varTselec = c("Tmoy30j","Tmoy40j","Tmoy50j","gel30j","gel40j","gel50j","GDD0","GDD5","Tmoyhiv","dChill")
 output = data.frame(matrix(ncol=4+length(varTselec)))
 colnames(output) = c("sitePheno",varTselec, "periode","esp","annee")
 # debourr_Alps[,paste0(varTselec,"_",rep(colnames(dates_deb_med)[-1],each=length(varTselec)))] = NA
 
-vartabT = c("julian_day","station_name","Tair_moy")
+vartabT = c("julian_day","station_name","Tair_moy", "Tair_min")
 
 for(annee in c(2006:2024)){#unique(debourr_Alps$year)){
   print(annee)
@@ -478,7 +503,7 @@ for(annee in c(2006:2024)){#unique(debourr_Alps$year)){
   else {
     reconstruc_Tday_sites = reconstruc_Tday_sites_an1
   }
-  tabT = rename(reconstruc_Tday_sites, c(jul_day=vartabT[1], sitePheno=vartabT[2], T=vartabT[3]))
+  tabT = rename(reconstruc_Tday_sites, c(jul_day=vartabT[1], sitePheno=vartabT[2], T=vartabT[3], , Tmin=vartabT[4]))
   
   # Tcalcs_per = apply(debourr_Alps[debourr_Alps$year == annee, c("id_base_site", "species")],1,
   #                    FUN=function(x){Tperiod_med(esp = x[2], site=x[1], dates_medianes = dates_deb_med, dureej = 30,
@@ -489,11 +514,14 @@ for(annee in c(2006:2024)){#unique(debourr_Alps$year)){
     for (periode in colnames(jourscibles)){
       jourcible = as.numeric(jourscibles[periode])
       Tcalc = tabT %>% filter(jul_day <= jourcible & jul_day >= jourcible-30) %>% group_by(sitePheno) %>%
-        summarise(Tmoy30j = mean(T, na.rm=T))
+        summarise(Tmoy30j = mean(T, na.rm=T),
+                  gel30j = length(Tmin[Tmin<0]))
       Tcalc = merge(Tcalc, tabT %>% filter(jul_day <= jourcible & jul_day >= jourcible-40) %>% group_by(sitePheno) %>%
-                      summarise(Tmoy40j = mean(T, na.rm=T)))
+                      summarise(Tmoy40j = mean(T, na.rm=T),
+                                gel40j = length(Tmin[Tmin<0])))
       Tcalc = merge(Tcalc, tabT %>% filter(jul_day <= jourcible & jul_day >= jourcible-50) %>% group_by(sitePheno) %>%
-                      summarise(Tmoy50j = mean(T, na.rm=T)))
+                      summarise(Tmoy50j = mean(T, na.rm=T),
+                                gel50j = length(Tmin[Tmin<0])))
       Tcalc = merge(Tcalc, tabT %>% filter(jul_day <= jourcible & jul_day >= 0) %>% group_by(sitePheno) %>%
                       summarise(GDD0 = sum(T[T > 0], na.rm=T),
                                 GDD5 = sum(T[T >=5]-5, na.rm=T)), 
@@ -545,12 +573,16 @@ debourr_Alps$cl_alt = factor(debourr_Alps$cl_alt, levels=c("150-450","450-750" ,
 debourr_Alps = debourr_Alps %>% rename(Tmoy30j = Tmoy30j_med_0624,
                                        Tmoy40j = Tmoy40j_med_0624,
                                        Tmoy50j = Tmoy50j_med_0624,
+                                       gel30j = gel30j_med_0624,
+                                       gel40j = gel40j_med_0624,
+                                       gel50j = gel50j_med_0624,
                                        GDD0 = GDD0_med_0624,
                                        GDD5 = GDD5_med_0624,
                                        Tmoyhiv = Tmoyhiv_med_0624,
                                        dChill = dChill_med_0624)
 
 # Remarque : au vu des corrélations entre ces variables de température, il est peu logique d'en intégrer plusieurs si elles sont trop corrélées
+varTselec = c("Tmoy30j","Tmoy40j","Tmoy50j","gel30j","gel40j","gel50j","GDD0","GDD5","Tmoyhiv","dChill")
 corrplot::corrplot(cor(na.omit(debourr_Alps[,varTselec])))
 # => on choisit une parmi Tmoy30, 40, 50j, GDD0, GDD5, qu'on combine avec Tmoyhiv et/ou dChill
 
@@ -574,6 +606,7 @@ R2_models = data.frame(species = unique(debourr_Alps$species),
 
 # Initialisation d'une liste avec tous les meilleurs modèles
 bestmods = list()
+altyearmods = list()
 
 ##############################################-
 #*---- Bouleau verruqueux ----
@@ -585,10 +618,11 @@ deb_Bpen = deb_Bpen[!is.na(deb_Bpen$Tmoy30j),]
 # ggplot(deb_Bpen, aes(x=year, y=julian_day)) + geom_point() + geom_smooth(method=lm) + labs(title = "Débourrement 10% - Bouleau", x="année",y="jour julien")
 
 #*-------- 1) On reprend le modèle de Bison et al. 2019, pour voir si on a à peu près les mêmes résultats ---- 
-mod_deb_Bpen_Alt <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|nom_zone), deb_Bpen, REML=F)
+mod_deb_Bpen_Alt <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|ID_zone), deb_Bpen, REML=F)
 summary(mod_deb_Bpen_Alt)
+altyearmods = c(list("Bouleau_verruqueux"=mod_deb_Bpen_Alt), altyearmods)
 deb_Bpen_10ans = deb_Bpen[deb_Bpen$year <= 2016,]
-mod_deb_Bpen_all_10ans <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|nom_zone), deb_Bpen_10ans, REML=F)
+mod_deb_Bpen_all_10ans <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|ID_zone), deb_Bpen_10ans, REML=F)
 summary(mod_deb_Bpen_all_10ans)
 # => OK : on retrouve à peu près les mêmes résultats que Bison et al 2019
 
@@ -599,7 +633,7 @@ n = nrow(deb_Bpen)
 trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
 train <- deb_Bpen[trainIndex ,]
 test <- deb_Bpen[-trainIndex ,]
-test1 <- test[!test$nom_zone%in%(unique(deb_Bpen$nom_zone[drop=T])[!unique(deb_Bpen$nom_zone[drop=T])%in%unique(train$nom_zone[drop=T])]),]
+test1 <- test[!test$ID_zone%in%(unique(deb_Bpen$ID_zone[drop=T])[!unique(deb_Bpen$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
 mod_train <- lmer(formula(mod_deb_Bpen_Alt), train)
 predictions <- mod_train %>% predict(test1)
 test2 <- cbind(test1, predictions)
@@ -610,24 +644,27 @@ R2_models[R2_models$species == "Bouleau_verruqueux", "R2_altyear_calibval"] = su
 
 #*-------- 2) On teste l'effet de différentes variables de température à la place des variables année et altitude ---- 
 # On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
-mod_deb_Bpen_Tmoy30j <- lmer(julian_day ~ Tmoy30j + (1|nom_zone) + (1|yearQ), deb_Bpen, REML=F)
-mod_deb_Bpen_Tmoy40j <- lmer(julian_day ~ Tmoy40j + (1|nom_zone) + (1|yearQ), deb_Bpen, REML=F)
-mod_deb_Bpen_Tmoy50j <- lmer(julian_day ~ Tmoy50j + (1|nom_zone) + (1|yearQ), deb_Bpen, REML=F)
-mod_deb_Bpen_GDD0 <- lmer(julian_day ~ GDD0 + (1|nom_zone) + (1|yearQ), deb_Bpen, REML=F)
-mod_deb_Bpen_GDD5 <- lmer(julian_day ~ GDD5 + (1|nom_zone) + (1|yearQ), deb_Bpen, REML=F)
-mod_deb_Bpen_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|nom_zone) + (1|yearQ), deb_Bpen, REML=F)
-mod_deb_Bpen_dChill <- lmer(julian_day ~ dChill + (1|nom_zone) + (1|yearQ), deb_Bpen, REML=F)
+mod_deb_Bpen_Tmoy30j <- lmer(julian_day ~ Tmoy30j + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F)
+mod_deb_Bpen_Tmoy40j <- lmer(julian_day ~ Tmoy40j + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F)
+mod_deb_Bpen_Tmoy50j <- lmer(julian_day ~ Tmoy50j + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F)
+mod_deb_Bpen_gel30j <- lmer(julian_day ~ gel30j + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F)
+mod_deb_Bpen_gel40j <- lmer(julian_day ~ gel40j + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F)
+mod_deb_Bpen_gel50j <- lmer(julian_day ~ gel50j + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F)
+mod_deb_Bpen_GDD0 <- lmer(julian_day ~ GDD0 + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F)
+mod_deb_Bpen_GDD5 <- lmer(julian_day ~ GDD5 + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F)
+mod_deb_Bpen_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F)
+mod_deb_Bpen_dChill <- lmer(julian_day ~ dChill + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F)
 
-AIC(mod_deb_Bpen_Tmoy30j) ; AIC(mod_deb_Bpen_Tmoy40j) ; AIC(mod_deb_Bpen_Tmoy50j) ; AIC(mod_deb_Bpen_GDD0) ; AIC(mod_deb_Bpen_GDD5); AIC(mod_deb_Bpen_Tmoyhiv) ; AIC(mod_deb_Bpen_dChill)
+AIC(mod_deb_Bpen_Tmoy30j) ; AIC(mod_deb_Bpen_Tmoy40j) ; AIC(mod_deb_Bpen_Tmoy50j) ; AIC(mod_deb_Bpen_gel30j) ; AIC(mod_deb_Bpen_gel40j) ; AIC(mod_deb_Bpen_gel50j) ; AIC(mod_deb_Bpen_GDD0) ; AIC(mod_deb_Bpen_GDD5); AIC(mod_deb_Bpen_Tmoyhiv) ; AIC(mod_deb_Bpen_dChill)
 # La variable Tmoy40j donne les meilleurs résultats : c'est celle qu'on garde pour la suite
 
 # NB : on peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
 # /!\ ce qui serait le plus logique serait de ne garder que la meilleure des 5 variables de Tmoy et GDD (cf corrélations) et éventuellement Tmoyhiv et/ou dChill
-mod_deb_Bpen_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|nom_zone) + (1|yearQ), deb_Bpen, REML=F)
-# On enlève les variables une par une : dChill puis Tmoy30j puis Tmoyhiv --> c'est le modèle avec le meilleur AIC... MAIS GDD5 n'a pas un effet
+mod_deb_Bpen_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + gel30j + gel40j + gel50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F)
+# On enlève les variables une par une : dChill puis Tmoy30j puis Tmoyhiv --> c'est le modèle avec le meilleur AIC... MAIS GDD5 n'a pas un effet 
 # significatif au seuil 0.05... et les variables de température Tmoy+GDD sont super corrélées ! 
-# En combinant ces 2 critères (AIC et significativité des effets), on retient donc :
-mod_deb_Bpen_multiT = lmer(julian_day ~ Tmoy40j + Tmoy50j + (1|nom_zone) + (1|yearQ), deb_Bpen, REML=F)
+# En combinant ces 3 critères (AIC, significativité des effets, variables peu corrélées), on retient donc :
+mod_deb_Bpen_multiT = lmer(julian_day ~ Tmoy40j + gel50j + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F) # AIC = 12583.2
 # On garde en tête ces multivariables de température pour la suite
 
 # ggplot(deb_Bpen, aes(x=year, y=Tmoy40j, col=cl_alt)) + geom_point() + geom_smooth(method="lm")
@@ -641,23 +678,23 @@ mod_deb_Bpen_multiT = lmer(julian_day ~ Tmoy40j + Tmoy50j + (1|nom_zone) + (1|ye
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-mod_deb_Bpen_Tmoy40j_Alt <- lmer(julian_day ~ Tmoy40j + altitude + (1|nom_zone) + (1|yearQ), deb_Bpen, REML=F)
-mod_deb_Bpen_Tmoy40j_year <- lmer(julian_day ~ Tmoy40j + year + (1|nom_zone) + (1|yearQ), deb_Bpen, REML=F)
-mod_deb_Bpen_Tmoy40j_clAlt <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|nom_zone) + (1|yearQ), deb_Bpen, REML=F)
-mod_deb_Bpen_Tmoy30j_Alt_ <- lmer(julian_day ~ Tmoy30j + altitude + (1|nom_zone) + (Tmoy30j|yearQ), deb_Bpen, REML=F)
-mod_deb_Bpen_Tmoy40j_Alt_ <- lmer(julian_day ~ Tmoy40j + altitude + (1|nom_zone) + (Tmoy40j|yearQ), deb_Bpen, REML=F)
-mod_deb_Bpen_Tmoy40j_clAlt_ <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|nom_zone) + (Tmoy40j|yearQ), deb_Bpen, REML=F)
+mod_deb_Bpen_Tmoy40j_Alt <- lmer(julian_day ~ Tmoy40j + altitude + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F)
+mod_deb_Bpen_Tmoy40j_year <- lmer(julian_day ~ Tmoy40j + year + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F)
+mod_deb_Bpen_Tmoy40j_clAlt <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F)
+mod_deb_Bpen_Tmoy30j_Alt_ <- lmer(julian_day ~ Tmoy30j + altitude + (1|ID_zone) + (Tmoy30j|yearQ), deb_Bpen, REML=F)
+mod_deb_Bpen_Tmoy40j_Alt_ <- lmer(julian_day ~ Tmoy40j + altitude + (1|ID_zone) + (Tmoy40j|yearQ), deb_Bpen, REML=F)
+mod_deb_Bpen_Tmoy40j_clAlt_ <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|ID_zone) + (Tmoy40j|yearQ), deb_Bpen, REML=F)
 AIC(mod_deb_Bpen_Tmoy40j) ; AIC(mod_deb_Bpen_Tmoy40j_Alt) ; AIC(mod_deb_Bpen_Tmoy40j_year) ; AIC(mod_deb_Bpen_Tmoy40j_clAlt) ; AIC(mod_deb_Bpen_Tmoy30j_Alt_) ; AIC(mod_deb_Bpen_Tmoy40j_Alt_) ; AIC(mod_deb_Bpen_Tmoy40j_clAlt_)
-# Mieux avec l'altitude en plus, et en ayant l'effet aléatoire 'année' sur la température (AIC = 12425.88)
+# Mieux avec l'altitude en plus, et en ayant l'effet aléatoire 'année' sur la température (AIC = 12453.3)
 
 #========= MEILLEUR MODELE :
-bestmod_deb_Bpen = lmer(julian_day ~ Tmoy30j + altitude + (1|nom_zone) + (Tmoy30j|yearQ), deb_Bpen, REML=F)
+bestmod_deb_Bpen = lmer(julian_day ~ Tmoy30j + altitude + (1|ID_zone) + (Tmoy30j|yearQ), deb_Bpen, REML=F) # AIC = 12453.3
 bestmods = c(list("Bouleau_verruqueux"=bestmod_deb_Bpen), bestmods)
 
 
 summary(bestmod_deb_Bpen)
 # gradient altitudinal : 1.8 jour de retard quand on monte de 100m
-# effet de la température moyenne dans les 30 jours précédents le débourrement : 1.3 jour d'avance quand on gagne 1°C
+# effet de la température moyenne dans les 30 jours précédant le débourrement : 1.4 jour d'avance quand on gagne 1°C
 
 # EVALUATION DU MODELE
 # - Effets fixes VS tous les effets inclus
@@ -669,7 +706,7 @@ n = nrow(deb_Bpen)
 trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
 train <- deb_Bpen[trainIndex ,]
 test <- deb_Bpen[-trainIndex ,]
-test1 <- test[!test$nom_zone%in%(unique(deb_Bpen$nom_zone[drop=T])[!unique(deb_Bpen$nom_zone[drop=T])%in%unique(train$nom_zone[drop=T])]),]
+test1 <- test[!test$ID_zone%in%(unique(deb_Bpen$ID_zone[drop=T])[!unique(deb_Bpen$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
 mod_train <- lmer(formula(bestmod_deb_Bpen), train)
 predictions <- mod_train %>% predict(test1)
 test2 <- cbind(test1, predictions)
@@ -684,12 +721,12 @@ resultats = rbind(resultats, data.frame(species = "Bouleau_verruqueux",
                                         coef = coef(summary(bestmod_deb_Bpen))[,1],
                                         std = coef(summary(bestmod_deb_Bpen))[,2],
                                         pval = coef(summary(bestmod_deb_Bpen))[,5],
-                                        varexpli = calcVarPart(bestmod_deb_Bpen)[rownames(coef(summary(bestmod_deb_Bpen)))]))
+                                        varexpli = tryCatch(calcVarPart(bestmod_deb_Bpen)[rownames(coef(summary(bestmod_deb_Bpen)))], error = function(e) return(NA))))
 
 
 # En utilisant ce même modèle mais pour la période 2006-2016 (cf article Bison et al), on obtient :
 deb_Bpen_10ans = deb_Bpen[deb_Bpen$year <= 2016,]
-bestmod_deb_Bpen_10ans <- lmer(julian_day ~ Tmoy30j_med_0616 + altitude + (1|nom_zone) + (Tmoy30j_med_0616|yearQ), deb_Bpen_10ans, REML=F)
+bestmod_deb_Bpen_10ans <- lmer(julian_day ~ Tmoy30j_med_0616 + altitude + (1|ID_zone) + (Tmoy30j_med_0616|yearQ), deb_Bpen_10ans, REML=F)
 summary(bestmod_deb_Bpen_10ans)
 # On a les mêmes tendances sur les deux périodes (même en prenant la température calculée avec la médiane des débourrements 2006-2016)
 
@@ -700,7 +737,7 @@ resultats = rbind(resultats, data.frame(species = "Bouleau_verruqueux",
                                         coef = coef(summary(bestmod_deb_Bpen_10ans))[,1],
                                         std = coef(summary(bestmod_deb_Bpen_10ans))[,2],
                                         pval = coef(summary(bestmod_deb_Bpen_10ans))[,5],
-                                        varexpli = calcVarPart(bestmod_deb_Bpen_10ans)[rownames(coef(summary(bestmod_deb_Bpen_10ans)))]))
+                                        varexpli = tryCatch(calcVarPart(bestmod_deb_Bpen_10ans)[rownames(coef(summary(bestmod_deb_Bpen_10ans)))], error = function(e) return(NA))))
 
 
 ##############################################-
@@ -714,10 +751,11 @@ deb_Cave = deb_Cave[!is.na(deb_Cave$Tmoy30j),]
 
 
 #*-------- 1) On reprend le modèle de Bison et al. 2019, pour voir si on a à peu près les mêmes résultats ---- 
-mod_deb_Cave_Alt <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|nom_zone), deb_Cave, REML=F)
+mod_deb_Cave_Alt <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|ID_zone), deb_Cave, REML=F)
 summary(mod_deb_Cave_Alt)
+altyearmods = c(list("Noisetier"=mod_deb_Cave_Alt), altyearmods)
 deb_Cave_10ans = deb_Cave[deb_Cave$year <= 2016,]
-mod_deb_Cave_all_10ans <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|nom_zone), deb_Cave_10ans, REML=F)
+mod_deb_Cave_all_10ans <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|ID_zone), deb_Cave_10ans, REML=F)
 summary(mod_deb_Cave_all_10ans)
 # => OK : on retrouve à peu près les mêmes résultats que Bison et al 2019 (mais effet année plus faible)
 
@@ -728,7 +766,7 @@ n = nrow(deb_Cave)
 trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
 train <- deb_Cave[trainIndex ,]
 test <- deb_Cave[-trainIndex ,]
-test1 <- test[!test$nom_zone%in%(unique(deb_Cave$nom_zone[drop=T])[!unique(deb_Cave$nom_zone[drop=T])%in%unique(train$nom_zone[drop=T])]),]
+test1 <- test[!test$ID_zone%in%(unique(deb_Cave$ID_zone[drop=T])[!unique(deb_Cave$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
 mod_train <- lmer(formula(mod_deb_Cave_Alt), train)
 predictions <- mod_train %>% predict(test1)
 test2 <- cbind(test1, predictions)
@@ -739,22 +777,25 @@ R2_models[R2_models$species == "Noisetier", "R2_altyear_calibval"] = summary(lm(
 
 #*-------- 2) On teste l'effet de différentes variables de température à la place des variables année et altitude ---- 
 # On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
-mod_deb_Cave_Tmoy30j <- lmer(julian_day ~ Tmoy30j + (1|nom_zone) + (1|yearQ), deb_Cave, REML=F)
-mod_deb_Cave_Tmoy40j <- lmer(julian_day ~ Tmoy40j + (1|nom_zone) + (1|yearQ), deb_Cave, REML=F)
-mod_deb_Cave_Tmoy50j <- lmer(julian_day ~ Tmoy50j + (1|nom_zone) + (1|yearQ), deb_Cave, REML=F)
-mod_deb_Cave_GDD0 <- lmer(julian_day ~ GDD0 + (1|nom_zone) + (1|yearQ), deb_Cave, REML=F)
-mod_deb_Cave_GDD5 <- lmer(julian_day ~ GDD5 + (1|nom_zone) + (1|yearQ), deb_Cave, REML=F)
-mod_deb_Cave_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|nom_zone) + (1|yearQ), deb_Cave, REML=F)
-mod_deb_Cave_dChill <- lmer(julian_day ~ dChill + (1|nom_zone) + (1|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_Tmoy30j <- lmer(julian_day ~ Tmoy30j + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_Tmoy40j <- lmer(julian_day ~ Tmoy40j + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_Tmoy50j <- lmer(julian_day ~ Tmoy50j + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_gel30j <- lmer(julian_day ~ gel30j + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_gel40j <- lmer(julian_day ~ gel40j + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_gel50j <- lmer(julian_day ~ gel50j + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_GDD0 <- lmer(julian_day ~ GDD0 + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_GDD5 <- lmer(julian_day ~ GDD5 + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_dChill <- lmer(julian_day ~ dChill + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F)
 
-AIC(mod_deb_Cave_Tmoy30j) ; AIC(mod_deb_Cave_Tmoy40j) ; AIC(mod_deb_Cave_Tmoy50j) ; AIC(mod_deb_Cave_GDD0) ; AIC(mod_deb_Cave_GDD5); AIC(mod_deb_Cave_Tmoyhiv) ; AIC(mod_deb_Cave_dChill)
+AIC(mod_deb_Cave_Tmoy30j) ; AIC(mod_deb_Cave_Tmoy40j) ; AIC(mod_deb_Cave_Tmoy50j) ;AIC(mod_deb_Cave_gel30j) ; AIC(mod_deb_Cave_gel40j) ; AIC(mod_deb_Cave_gel50j) ; AIC(mod_deb_Cave_GDD0) ; AIC(mod_deb_Cave_GDD5); AIC(mod_deb_Cave_Tmoyhiv) ; AIC(mod_deb_Cave_dChill)
 # La variable Tmoy50j donne les meilleurs résultats : c'est celle qu'on garde pour la suite
 
 # NB : on peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
-mod_deb_Cave_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|nom_zone) + (1|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + gel30j + gel40j + gel50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F)
 # On enlève les variables une par une : Tmoy30j puis dChill puis Tmoyhiv puis Tmoy50j--> c'est le modèle avec le meilleur AIC... MAIS les variables
 # restantes sont quand même fortement corrélées...!
-mod_deb_Cave_multiT = lmer(julian_day ~ Tmoy40j + GDD0 + GDD5 + (1|nom_zone) + (1|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_multiT = lmer(julian_day ~ Tmoy40j + GDD5 + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F) # AIC = 12845.5
 # On garde en tête ces multivariables de température pour la suite
 
 # ggplot(deb_Cave, aes(x=year, y=Tmoy40j, col=cl_alt)) + geom_point() + geom_smooth(method="lm")
@@ -769,22 +810,22 @@ mod_deb_Cave_multiT = lmer(julian_day ~ Tmoy40j + GDD0 + GDD5 + (1|nom_zone) + (
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-mod_deb_Cave_Tmoy40j_Alt <- lmer(julian_day ~ Tmoy40j + altitude + (1|nom_zone) + (1|yearQ), deb_Cave, REML=F)
-mod_deb_Cave_Tmoy40j_year <- lmer(julian_day ~ Tmoy40j + year + (1|nom_zone) + (1|yearQ), deb_Cave, REML=F)
-mod_deb_Cave_Tmoy40j_clAlt <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|nom_zone) + (1|yearQ), deb_Cave, REML=F)
-mod_deb_Cave_Tmoy40j_Alt_ <- lmer(julian_day ~ Tmoy40j + altitude + (1|nom_zone) + (Tmoy40j|yearQ), deb_Cave, REML=F)
-mod_deb_Cave_Tmoy40jGDD5_Alt_ <- lmer(julian_day ~ Tmoy40j + GDD5 + altitude + (1|nom_zone) + (Tmoy40j|yearQ), deb_Cave, REML=F)
-mod_deb_Cave_Tmoy40j_clAlt_ <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|nom_zone) + (Tmoy40j|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_Tmoy40j_Alt <- lmer(julian_day ~ Tmoy40j + altitude + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_Tmoy40j_year <- lmer(julian_day ~ Tmoy40j + year + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_Tmoy40j_clAlt <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_Tmoy40j_Alt_ <- lmer(julian_day ~ Tmoy40j + altitude + (1|ID_zone) + (Tmoy40j|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_Tmoy40jGDD5_Alt_ <- lmer(julian_day ~ Tmoy40j + GDD5 + altitude + (1|ID_zone) + (Tmoy40j|yearQ), deb_Cave, REML=F)
+mod_deb_Cave_Tmoy40j_clAlt_ <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|ID_zone) + (Tmoy40j|yearQ), deb_Cave, REML=F)
 AIC(mod_deb_Cave_Tmoy40j) ; AIC(mod_deb_Cave_Tmoy40j_Alt) ; AIC(mod_deb_Cave_Tmoy40j_year) ; AIC(mod_deb_Cave_Tmoy40j_clAlt) ; AIC(mod_deb_Cave_Tmoy40j_Alt_) ; AIC(mod_deb_Cave_Tmoy40jGDD5_Alt_) ; AIC(mod_deb_Cave_Tmoy40j_clAlt_)
-# Mieux avec l'altitude en plus, en ayant une combinaison GDD5 + Tmoy40j, et en ayant l'effet aléatoire 'année' sur la température (AIC = 12771.66)
+# Mieux avec l'altitude en plus, en ayant une combinaison GDD5 + Tmoy40j, et en ayant l'effet aléatoire 'année' sur la température (AIC = 12798.2)
 
 #========= MEILLEUR MODELE :
-bestmod_deb_Cave = lmer(julian_day ~ Tmoy40j + GDD5 + altitude + (1|nom_zone) + (Tmoy40j|yearQ), deb_Cave, REML=F)
+bestmod_deb_Cave = lmer(julian_day ~ Tmoy40j + GDD5 + altitude + (1|ID_zone) + (Tmoy40j|yearQ), deb_Cave, REML=F) # AIC = 12798.2
 bestmods = c(list("Noisetier"=bestmod_deb_Cave), bestmods)
 
 summary(bestmod_deb_Cave)
 # gradient altitudinal : 1.9 jour de retard quand on monte de 100m
-# effet de la température moyenne dans les 30 jours précédents le débourrement : 1.4 jour d'avance quand on gagne 1°C
+# effet de la température moyenne dans les 40 jours précédant le débourrement : 3.5 jours d'avance quand on gagne 1°C
 
 # EVALUATION DU MODELE
 # - Effets fixes VS tous les effets inclus
@@ -796,7 +837,7 @@ n = nrow(deb_Cave)
 trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
 train <- deb_Cave[trainIndex ,]
 test <- deb_Cave[-trainIndex ,]
-test1 <- test[!test$nom_zone%in%(unique(deb_Cave$nom_zone[drop=T])[!unique(deb_Cave$nom_zone[drop=T])%in%unique(train$nom_zone[drop=T])]),]
+test1 <- test[!test$ID_zone%in%(unique(deb_Cave$ID_zone[drop=T])[!unique(deb_Cave$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
 mod_train <- lmer(formula(bestmod_deb_Cave), train)
 predictions <- mod_train %>% predict(test1)
 test2 <- cbind(test1, predictions)
@@ -811,12 +852,12 @@ resultats = rbind(resultats, data.frame(species = "Noisetier",
                                         coef = coef(summary(bestmod_deb_Cave))[,1],
                                         std = coef(summary(bestmod_deb_Cave))[,2],
                                         pval = coef(summary(bestmod_deb_Cave))[,5],
-                                        varexpli = calcVarPart(bestmod_deb_Cave)[rownames(coef(summary(bestmod_deb_Cave)))]))
+                                        varexpli = tryCatch(calcVarPart(bestmod_deb_Cave)[rownames(coef(summary(bestmod_deb_Cave)))], error = function(e) return(NA))))
 
 
 # En utilisant ce même modèle mais pour la période 2006-2016 (cf article Bison et al), on obtient :
 deb_Cave_10ans = deb_Cave[deb_Cave$year <= 2016,]
-bestmod_deb_Cave_10ans <- lmer(julian_day ~ Tmoy40j_med_0616 + GDD5_med_0616 + altitude + (1|nom_zone) + (Tmoy40j_med_0616|yearQ), deb_Cave_10ans, REML=F)
+bestmod_deb_Cave_10ans <- lmer(julian_day ~ Tmoy40j_med_0616 + GDD5_med_0616 + altitude + (1|ID_zone) + (Tmoy40j_med_0616|yearQ), deb_Cave_10ans, REML=F)
 summary(bestmod_deb_Cave_10ans)
 # On a les mêmes tendances sur les deux périodes (même en prenant la température calculée avec la médiane des débourrements 2006-2016)
 
@@ -827,7 +868,7 @@ resultats = rbind(resultats, data.frame(species = "Noisetier",
                                         coef = coef(summary(bestmod_deb_Cave_10ans))[,1],
                                         std = coef(summary(bestmod_deb_Cave_10ans))[,2],
                                         pval = coef(summary(bestmod_deb_Cave_10ans))[,5],
-                                        varexpli = calcVarPart(bestmod_deb_Cave_10ans)[rownames(coef(summary(bestmod_deb_Cave_10ans)))]))
+                                        varexpli = tryCatch(calcVarPart(bestmod_deb_Cave_10ans)[rownames(coef(summary(bestmod_deb_Cave_10ans)))], error = function(e) return(NA))))
 
 
 
@@ -840,10 +881,11 @@ deb_Fexc = deb_Fexc[!is.na(deb_Fexc$Tmoy30j),]
 # ggplot(deb_Fexc, aes(x=year, y=julian_day)) + geom_point() + geom_smooth(method=lm) + labs(title = "Débourrement 10% - Frêne", x="année",y="jour julien")
 
 #*-------- 1) On reprend le modèle de Bison et al. 2019, pour voir si on a à peu près les mêmes résultats ---- 
-mod_deb_Fexc_Alt <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|nom_zone), deb_Fexc, REML=F)
+mod_deb_Fexc_Alt <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|ID_zone), deb_Fexc, REML=F)
 summary(mod_deb_Fexc_Alt)
+altyearmods = c(list("Frene"=mod_deb_Fexc_Alt), altyearmods)
 deb_Fexc_10ans = deb_Fexc[deb_Fexc$year <= 2016,]
-mod_deb_Fexc_all_10ans <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|nom_zone), deb_Fexc_10ans, REML=F)
+mod_deb_Fexc_all_10ans <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|ID_zone), deb_Fexc_10ans, REML=F)
 summary(mod_deb_Fexc_all_10ans)
 # => OK : on retrouve à peu près les mêmes résultats que Bison et al 2019 (mais effet année plus faible)
 
@@ -854,7 +896,7 @@ n = nrow(deb_Fexc)
 trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
 train <- deb_Fexc[trainIndex ,]
 test <- deb_Fexc[-trainIndex ,]
-test1 <- test[!test$nom_zone%in%(unique(deb_Fexc$nom_zone[drop=T])[!unique(deb_Fexc$nom_zone[drop=T])%in%unique(train$nom_zone[drop=T])]),]
+test1 <- test[!test$ID_zone%in%(unique(deb_Fexc$ID_zone[drop=T])[!unique(deb_Fexc$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
 mod_train <- lmer(formula(mod_deb_Fexc_Alt), train)
 predictions <- mod_train %>% predict(test1)
 test2 <- cbind(test1, predictions)
@@ -865,22 +907,25 @@ R2_models[R2_models$species == "Frene", "R2_altyear_calibval"] = summary(lm(pred
 
 #*-------- 2) On teste l'effet de différentes variables de température à la place des variables année et altitude ---- 
 # On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
-mod_deb_Fexc_Tmoy30j <- lmer(julian_day ~ Tmoy30j + (1|nom_zone) + (1|yearQ), deb_Fexc, REML=F)
-mod_deb_Fexc_Tmoy40j <- lmer(julian_day ~ Tmoy40j + (1|nom_zone) + (1|yearQ), deb_Fexc, REML=F)
-mod_deb_Fexc_Tmoy50j <- lmer(julian_day ~ Tmoy50j + (1|nom_zone) + (1|yearQ), deb_Fexc, REML=F)
-mod_deb_Fexc_GDD0 <- lmer(julian_day ~ GDD0 + (1|nom_zone) + (1|yearQ), deb_Fexc, REML=F)
-mod_deb_Fexc_GDD5 <- lmer(julian_day ~ GDD5 + (1|nom_zone) + (1|yearQ), deb_Fexc, REML=F)
-mod_deb_Fexc_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|nom_zone) + (1|yearQ), deb_Fexc, REML=F)
-mod_deb_Fexc_dChill <- lmer(julian_day ~ dChill + (1|nom_zone) + (1|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_Tmoy30j <- lmer(julian_day ~ Tmoy30j + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_Tmoy40j <- lmer(julian_day ~ Tmoy40j + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_Tmoy50j <- lmer(julian_day ~ Tmoy50j + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_gel30j <- lmer(julian_day ~ gel30j + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_gel40j <- lmer(julian_day ~ gel40j + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_gel50j <- lmer(julian_day ~ gel50j + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_GDD0 <- lmer(julian_day ~ GDD0 + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_GDD5 <- lmer(julian_day ~ GDD5 + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_dChill <- lmer(julian_day ~ dChill + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F)
 
-AIC(mod_deb_Fexc_Tmoy30j) ; AIC(mod_deb_Fexc_Tmoy40j) ; AIC(mod_deb_Fexc_Tmoy50j) ; AIC(mod_deb_Fexc_GDD0) ; AIC(mod_deb_Fexc_GDD5); AIC(mod_deb_Fexc_Tmoyhiv) ; AIC(mod_deb_Fexc_dChill)
+AIC(mod_deb_Fexc_Tmoy30j) ; AIC(mod_deb_Fexc_Tmoy40j) ; AIC(mod_deb_Fexc_Tmoy50j) ; AIC(mod_deb_Fexc_gel30j) ; AIC(mod_deb_Fexc_gel40j) ; AIC(mod_deb_Fexc_gel50j) ; AIC(mod_deb_Fexc_GDD0) ; AIC(mod_deb_Fexc_GDD5); AIC(mod_deb_Fexc_Tmoyhiv) ; AIC(mod_deb_Fexc_dChill)
 # La variable Tmoy30j donne les meilleurs résultats : c'est celle qu'on garde pour la suite
 
 # NB : on peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
-mod_deb_Fexc_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|nom_zone) + (1|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + gel30j + gel40j + gel50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F)
 # On enlève les variables une par une : Tmoy30j puis dChill puis Tmoyhiv puis Tmoy50j--> c'est le modèle avec le meilleur AIC... MAIS les variables
 # restantes sont quand même fortement corrélées...!
-mod_deb_Fexc_multiT = lmer(julian_day ~ Tmoy30j + GDD0 + (1|nom_zone) + (1|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_multiT = lmer(julian_day ~ Tmoy30j + GDD0 + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F) # AIC = 13924.1
 # On garde en tête ces multivariables de température pour la suite
 
 # ggplot(deb_Fexc, aes(x=year, y=Tmoy30j, col=cl_alt)) + geom_point() + geom_smooth(method="lm")
@@ -894,23 +939,23 @@ mod_deb_Fexc_multiT = lmer(julian_day ~ Tmoy30j + GDD0 + (1|nom_zone) + (1|yearQ
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-mod_deb_Fexc_Tmoy30j_Alt <- lmer(julian_day ~ Tmoy30j + altitude + (1|nom_zone) + (1|yearQ), deb_Fexc, REML=F)
-mod_deb_Fexc_Tmoy30j_year <- lmer(julian_day ~ Tmoy30j + year + (1|nom_zone) + (1|yearQ), deb_Fexc, REML=F)
-mod_deb_Fexc_Tmoy30j_clAlt <- lmer(julian_day ~ Tmoy30j * cl_alt + (1|nom_zone) + (1|yearQ), deb_Fexc, REML=F)
-mod_deb_Fexc_Tmoy30j_Alt_ <- lmer(julian_day ~ Tmoy30j + altitude + (1|nom_zone) + (Tmoy30j|yearQ), deb_Fexc, REML=F)
-mod_deb_Fexc_Tmoy30jGDD0_Alt_ <- lmer(julian_day ~ Tmoy30j + GDD0 + altitude + (1|nom_zone) + (Tmoy30j|yearQ), deb_Fexc, REML=F)
-mod_deb_Fexc_GDD0_Alt_ <- lmer(julian_day ~ GDD0 + altitude + (1|nom_zone) + (GDD0|yearQ), deb_Fexc, REML=F)
-mod_deb_Fexc_Tmoy30j_clAlt_ <- lmer(julian_day ~ Tmoy30j * cl_alt + (1|nom_zone) + (Tmoy30j|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_Tmoy30j_Alt <- lmer(julian_day ~ Tmoy30j + altitude + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_Tmoy30j_year <- lmer(julian_day ~ Tmoy30j + year + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_Tmoy30j_clAlt <- lmer(julian_day ~ Tmoy30j * cl_alt + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_Tmoy30j_Alt_ <- lmer(julian_day ~ Tmoy30j + altitude + (1|ID_zone) + (Tmoy30j|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_Tmoy30jGDD0_Alt_ <- lmer(julian_day ~ Tmoy30j + GDD0 + altitude + (1|ID_zone) + (Tmoy30j|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_GDD0_Alt_ <- lmer(julian_day ~ GDD0 + altitude + (1|ID_zone) + (GDD0|yearQ), deb_Fexc, REML=F)
+mod_deb_Fexc_Tmoy30j_clAlt_ <- lmer(julian_day ~ Tmoy30j * cl_alt + (1|ID_zone) + (Tmoy30j|yearQ), deb_Fexc, REML=F)
 AIC(mod_deb_Fexc_Tmoy30j) ; AIC(mod_deb_Fexc_Tmoy30j_Alt) ; AIC(mod_deb_Fexc_Tmoy30j_year) ; AIC(mod_deb_Fexc_Tmoy30j_clAlt) ; AIC(mod_deb_Fexc_Tmoy30j_Alt_); AIC(mod_deb_Fexc_Tmoy30jGDD0_Alt_); AIC(mod_deb_Fexc_GDD0_Alt_) ; AIC(mod_deb_Fexc_Tmoy30j_clAlt_)
-# Mieux avec l'altitude en plus, et en ayant l'effet aléatoire 'année' sur la température (AIC = 13691.57)
+
 
 #========= MEILLEUR MODELE :
-bestmod_deb_Fexc = lmer(julian_day ~ Tmoy30j + altitude + (1|nom_zone) + (Tmoy30j|yearQ), deb_Fexc, REML=F)
+bestmod_deb_Fexc = lmer(julian_day ~ GDD0 + Tmoy30j + altitude + (1|ID_zone) + (Tmoy30j|yearQ), deb_Fexc, REML=F) # AIC = 13761.28
 bestmods = c(list("Frene"=bestmod_deb_Fexc), bestmods)
 
 summary(bestmod_deb_Fexc)
 # gradient altitudinal : 3.3 jours de retard quand on monte de 100m
-# effet de la température moyenne dans les 30 jours précédents le débourrement : 0.2 jours de RETARD quand on gagne 1°C MAIS non significatif (pval = 0.6)
+# effet de la température moyenne dans les 30 jours précédant le débourrement : 0.5 jours d'avance quand on gagne 1°C MAIS non significatif (pval = 0.49)
 
 # EVALUATION DU MODELE
 # - Effets fixes VS tous les effets inclus
@@ -922,7 +967,7 @@ n = nrow(deb_Fexc)
 trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
 train <- deb_Fexc[trainIndex ,]
 test <- deb_Fexc[-trainIndex ,]
-test1 <- test[!test$nom_zone%in%(unique(deb_Fexc$nom_zone[drop=T])[!unique(deb_Fexc$nom_zone[drop=T])%in%unique(train$nom_zone[drop=T])]),]
+test1 <- test[!test$ID_zone%in%(unique(deb_Fexc$ID_zone[drop=T])[!unique(deb_Fexc$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
 mod_train <- lmer(formula(bestmod_deb_Fexc), train)
 predictions <- mod_train %>% predict(test1)
 test2 <- cbind(test1, predictions)
@@ -937,12 +982,12 @@ resultats = rbind(resultats, data.frame(species = "Frene",
                                         coef = coef(summary(bestmod_deb_Fexc))[,1],
                                         std = coef(summary(bestmod_deb_Fexc))[,2],
                                         pval = coef(summary(bestmod_deb_Fexc))[,5],
-                                        varexpli = calcVarPart(bestmod_deb_Fexc)[rownames(coef(summary(bestmod_deb_Fexc)))]))
+                                        varexpli = tryCatch(calcVarPart(bestmod_deb_Fexc)[rownames(coef(summary(bestmod_deb_Fexc)))], error = function(e) return(NA))))
 
 
 # En utilisant ce même modèle mais pour la période 2006-2016 (cf article Bison et al), on obtient :
 deb_Fexc_10ans = deb_Fexc[deb_Fexc$year <= 2016,]
-bestmod_deb_Fexc_10ans <- lmer(julian_day ~ Tmoy30j_med_0616 + altitude + (1|nom_zone) + (Tmoy30j_med_0616|yearQ), deb_Fexc_10ans, REML=F)
+bestmod_deb_Fexc_10ans <- lmer(julian_day ~ Tmoy30j_med_0616 + GDD0_med_0616 + altitude + (1|ID_zone) + (Tmoy30j_med_0616|yearQ), deb_Fexc_10ans, REML=F)
 summary(bestmod_deb_Fexc_10ans)
 # On a les mêmes tendances sur les deux périodes (même en prenant la température calculée avec la médiane des débourrements 2006-2016)
 
@@ -953,7 +998,7 @@ resultats = rbind(resultats, data.frame(species = "Frene",
                                         coef = coef(summary(bestmod_deb_Fexc_10ans))[,1],
                                         std = coef(summary(bestmod_deb_Fexc_10ans))[,2],
                                         pval = coef(summary(bestmod_deb_Fexc_10ans))[,5],
-                                        varexpli = calcVarPart(bestmod_deb_Fexc_10ans)[rownames(coef(summary(bestmod_deb_Fexc_10ans)))]))
+                                        varexpli = tryCatch(calcVarPart(bestmod_deb_Fexc_10ans)[rownames(coef(summary(bestmod_deb_Fexc_10ans)))], error = function(e) return(NA))))
 
 
 ##############################################-
@@ -968,10 +1013,11 @@ deb_Ldec = deb_Ldec[!is.na(deb_Ldec$Tmoy30j),]
 deb_Ldec = deb_Ldec[deb_Ldec$cl_alt != "150-450",]
 
 #*-------- 1) On reprend le modèle de Bison et al. 2019, pour voir si on a à peu près les mêmes résultats ---- 
-mod_deb_Ldec_Alt <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|nom_zone), deb_Ldec, REML=F)
+mod_deb_Ldec_Alt <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|ID_zone), deb_Ldec, REML=F)
 summary(mod_deb_Ldec_Alt)
+altyearmods = c(list("Meleze"=mod_deb_Ldec_Alt), altyearmods)
 deb_Ldec_10ans = deb_Ldec[deb_Ldec$year <= 2016,]
-mod_deb_Ldec_all_10ans <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|nom_zone), deb_Ldec_10ans, REML=F)
+mod_deb_Ldec_all_10ans <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|ID_zone), deb_Ldec_10ans, REML=F)
 summary(mod_deb_Ldec_all_10ans)
 # => OK : on retrouve à peu près les mêmes résultats que Bison et al 2019 (mais effet année plus fort)
 
@@ -982,7 +1028,7 @@ n = nrow(deb_Ldec)
 trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
 train <- deb_Ldec[trainIndex ,]
 test <- deb_Ldec[-trainIndex ,]
-test1 <- test[!test$nom_zone%in%(unique(deb_Ldec$nom_zone[drop=T])[!unique(deb_Ldec$nom_zone[drop=T])%in%unique(train$nom_zone[drop=T])]),]
+test1 <- test[!test$ID_zone%in%(unique(deb_Ldec$ID_zone[drop=T])[!unique(deb_Ldec$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
 mod_train <- lmer(formula(mod_deb_Ldec_Alt), train)
 predictions <- mod_train %>% predict(test1)
 test2 <- cbind(test1, predictions)
@@ -993,21 +1039,24 @@ R2_models[R2_models$species == "Meleze", "R2_altyear_calibval"] = summary(lm(pre
 
 #*-------- 2) On teste l'effet de différentes variables de température à la place des variables année et altitude ---- 
 # On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
-mod_deb_Ldec_Tmoy30j <- lmer(julian_day ~ Tmoy30j + (1|nom_zone) + (1|yearQ), deb_Ldec, REML=F)
-mod_deb_Ldec_Tmoy40j <- lmer(julian_day ~ Tmoy40j + (1|nom_zone) + (1|yearQ), deb_Ldec, REML=F)
-mod_deb_Ldec_Tmoy50j <- lmer(julian_day ~ Tmoy50j + (1|nom_zone) + (1|yearQ), deb_Ldec, REML=F)
-mod_deb_Ldec_GDD0 <- lmer(julian_day ~ GDD0 + (1|nom_zone) + (1|yearQ), deb_Ldec, REML=F)
-mod_deb_Ldec_GDD5 <- lmer(julian_day ~ GDD5 + (1|nom_zone) + (1|yearQ), deb_Ldec, REML=F)
-mod_deb_Ldec_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|nom_zone) + (1|yearQ), deb_Ldec, REML=F)
-mod_deb_Ldec_dChill <- lmer(julian_day ~ dChill + (1|nom_zone) + (1|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_Tmoy30j <- lmer(julian_day ~ Tmoy30j + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_Tmoy40j <- lmer(julian_day ~ Tmoy40j + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_Tmoy50j <- lmer(julian_day ~ Tmoy50j + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_gel30j <- lmer(julian_day ~ gel30j + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_gel40j <- lmer(julian_day ~ gel40j + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_gel50j <- lmer(julian_day ~ gel50j + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_GDD0 <- lmer(julian_day ~ GDD0 + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_GDD5 <- lmer(julian_day ~ GDD5 + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_dChill <- lmer(julian_day ~ dChill + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F)
 
-AIC(mod_deb_Ldec_Tmoy30j) ; AIC(mod_deb_Ldec_Tmoy40j) ; AIC(mod_deb_Ldec_Tmoy50j) ; AIC(mod_deb_Ldec_GDD0) ; AIC(mod_deb_Ldec_GDD5); AIC(mod_deb_Ldec_Tmoyhiv) ; AIC(mod_deb_Ldec_dChill)
+AIC(mod_deb_Ldec_Tmoy30j) ; AIC(mod_deb_Ldec_Tmoy40j) ; AIC(mod_deb_Ldec_Tmoy50j) ; AIC(mod_deb_Ldec_gel30j) ; AIC(mod_deb_Ldec_gel40j) ; AIC(mod_deb_Ldec_gel50j) ; AIC(mod_deb_Ldec_GDD0) ; AIC(mod_deb_Ldec_GDD5); AIC(mod_deb_Ldec_Tmoyhiv) ; AIC(mod_deb_Ldec_dChill)
 # La variable Tmoy40j donne les meilleurs résultats : c'est celle qu'on garde pour la suite
 
 # NB : on peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
-mod_deb_Ldec_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|nom_zone) + (1|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + gel30j + gel40j + gel50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F)
 # On enlève les variables une par une : Tmoy40j reste le meilleur modèle
-mod_deb_Ldec_multiT = lmer(julian_day ~ Tmoy40j + (1|nom_zone) + (1|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_multiT = lmer(julian_day ~ Tmoy40j + gel30j + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F) # AIC = 13370.29
 
 # ggplot(deb_Ldec, aes(x=year, y=Tmoy40j, col=cl_alt)) + geom_point() + geom_smooth(method="lm")
 
@@ -1020,24 +1069,23 @@ mod_deb_Ldec_multiT = lmer(julian_day ~ Tmoy40j + (1|nom_zone) + (1|yearQ), deb_
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-mod_deb_Ldec_Tmoy40j_Alt <- lmer(julian_day ~ Tmoy40j + altitude + (1|nom_zone) + (1|yearQ), deb_Ldec, REML=F)
-mod_deb_Ldec_Tmoy40j_year <- lmer(julian_day ~ Tmoy40j  + year + (1|nom_zone) + (1|yearQ), deb_Ldec, REML=F)
-mod_deb_Ldec_Tmoy40j_clAlt <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|nom_zone) + (1|yearQ), deb_Ldec, REML=F)
-mod_deb_Ldec_Tmoy40j_Alt_ <- lmer(julian_day ~ Tmoy40j + altitude + (1|nom_zone) + (Tmoy40j|yearQ), deb_Ldec, REML=F)
-mod_deb_Ldec_Tmoy40j_clAlt_ <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|nom_zone) + (Tmoy40j|yearQ), deb_Ldec, REML=F)
-mod_deb_Ldec_Tmoy40j_clAlt_x <- lmer(julian_day ~ Tmoy40j * altitude + (1|nom_zone) + (Tmoy40j|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_Tmoy40j_Alt <- lmer(julian_day ~ Tmoy40j + altitude + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_Tmoy40j_year <- lmer(julian_day ~ Tmoy40j  + year + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_Tmoy40j_clAlt <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_Tmoy40j_Alt_ <- lmer(julian_day ~ Tmoy40j + altitude + (1|ID_zone) + (Tmoy40j|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_Tmoy40j_clAlt_ <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|ID_zone) + (Tmoy40j|yearQ), deb_Ldec, REML=F)
+mod_deb_Ldec_Tmoy40j_clAlt_x <- lmer(julian_day ~ Tmoy40j * altitude + (1|ID_zone) + (Tmoy40j|yearQ), deb_Ldec, REML=F)
 AIC(mod_deb_Ldec_Tmoy40j) ; AIC(mod_deb_Ldec_Tmoy40j_Alt) ; AIC(mod_deb_Ldec_Tmoy40j_year) ; AIC(mod_deb_Ldec_Tmoy40j_clAlt) ; AIC(mod_deb_Ldec_Tmoy40j_Alt_) ; AIC(mod_deb_Ldec_Tmoy40j_clAlt_) ; AIC(mod_deb_Ldec_Tmoy40j_clAlt_x)
-# Mieux avec l'altitude en plus sous forme de CLASSE, en INTERACTION avec la température (AIC = 13242.46)
+
 
 #========= MEILLEUR MODELE :
-bestmod_deb_Ldec = lmer(julian_day ~ Tmoy40j * cl_alt + (1|nom_zone) + (Tmoy40j|yearQ), deb_Ldec, REML=F)
+bestmod_deb_Ldec = lmer(julian_day ~ Tmoy40j * gel30j + altitude + (1|ID_zone) + (Tmoy40j|yearQ), deb_Ldec, REML=F) # AIC = 13271.05
 bestmods = c(list("Meleze"=bestmod_deb_Ldec), bestmods)
 
 summary(bestmod_deb_Ldec)
-visreg(bestmod_deb_Ldec, "Tmoy40j", by="cl_alt")
-# gradient altitudinal : /!\ interaction avec température
-# effet de la température moyenne dans les 30 jours précédents le débourrement : 1.4 jour d'avance quand on gagne 1°C MAIS dépend de l'altitude !
-#                       -> à basse altitude la température a un effet retard, mais un effet avance à haute altitude
+visreg(bestmod_deb_Ldec, "Tmoy40j", by="gel30j")
+# gradient altitudinal : 2.3 jours de retard par 100m
+# effet de la température moyenne dans les 40 jours précédant le débourrement : 1.6 jour d'avance quand on gagne 1°C MAIS effet moins fort s'il y a des jours de gel
 
 # EVALUATION DU MODELE
 # - Effets fixes VS tous les effets inclus
@@ -1049,12 +1097,12 @@ n = nrow(deb_Ldec)
 trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
 train <- deb_Ldec[trainIndex ,]
 test <- deb_Ldec[-trainIndex ,]
-test1 <- test[!test$nom_zone%in%(unique(deb_Ldec$nom_zone[drop=T])[!unique(deb_Ldec$nom_zone[drop=T])%in%unique(train$nom_zone[drop=T])]),]
+test1 <- test[!test$ID_zone%in%(unique(deb_Ldec$ID_zone[drop=T])[!unique(deb_Ldec$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
 mod_train <- lmer(formula(bestmod_deb_Ldec), train)
 predictions <- mod_train %>% predict(test1)
 test2 <- cbind(test1, predictions)
 # summary(lm(predictions~julian_day, test2))
-# # R2 ajusté = 0.807
+# # R2 ajusté = 0.820
 R2_models[R2_models$species == "Meleze", "R2_bestmod_calibval"] = summary(lm(predictions~julian_day, test2))[["adj.r.squared"]]
 
 
@@ -1064,12 +1112,12 @@ resultats = rbind(resultats, data.frame(species = "Meleze",
                                         coef = coef(summary(bestmod_deb_Ldec))[,1],
                                         std = coef(summary(bestmod_deb_Ldec))[,2],
                                         pval = coef(summary(bestmod_deb_Ldec))[,5],
-                                        varexpli = calcVarPart(bestmod_deb_Ldec)[rownames(coef(summary(bestmod_deb_Ldec)))]))
+                                        varexpli = tryCatch(calcVarPart(bestmod_deb_Ldec)[rownames(coef(summary(bestmod_deb_Ldec)))], error = function(e) return(NA))))
 
 
 # En utilisant ce même modèle mais pour la période 2006-2016 (cf article Bison et al), on obtient :
 deb_Ldec_10ans = deb_Ldec[deb_Ldec$year <= 2016,]
-bestmod_deb_Ldec_10ans <- lmer(julian_day ~ Tmoy40j_med_0616 * cl_alt + (1|nom_zone) + (Tmoy40j_med_0616|yearQ), deb_Ldec_10ans, REML=F)
+bestmod_deb_Ldec_10ans <- lmer(julian_day ~ Tmoy40j_med_0616 * gel30j_med_0616 + altitude + (1|ID_zone) + (Tmoy40j_med_0616|yearQ),  deb_Ldec_10ans, REML=F)
 summary(bestmod_deb_Ldec_10ans)
 # On a les mêmes tendances sur les deux périodes 
 
@@ -1080,8 +1128,7 @@ resultats = rbind(resultats, data.frame(species = "Meleze",
                                         coef = coef(summary(bestmod_deb_Ldec_10ans))[,1],
                                         std = coef(summary(bestmod_deb_Ldec_10ans))[,2],
                                         pval = coef(summary(bestmod_deb_Ldec_10ans))[,5],
-                                        # varexpli = calcVarPart(bestmod_deb_Ldec_10ans)[rownames(coef(summary(bestmod_deb_Ldec_10ans)))]))
-                                        varexpli = NA))
+                                        varexpli = tryCatch(calcVarPart(bestmod_deb_Ldec_10ans)[rownames(coef(summary(bestmod_deb_Ldec_10ans)))], error = function(e) return(NA))))
 
 ##############################################-
 #*---- Epicéa ----
@@ -1094,10 +1141,11 @@ deb_Pabi = deb_Pabi[!is.na(deb_Pabi$Tmoy30j),]
 deb_Pabi = deb_Pabi[deb_Pabi$cl_alt != "150-450",] # on retire la classe d'altitude la plus basse parce qu'il n'y a pas assez de données pour la suite
 
 #*-------- 1) On reprend le modèle de Bison et al. 2019, pour voir si on a à peu près les mêmes résultats ---- 
-mod_deb_Pabi_Alt <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|nom_zone), deb_Pabi, REML=F)
+mod_deb_Pabi_Alt <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|ID_zone), deb_Pabi, REML=F)
 summary(mod_deb_Pabi_Alt)
+altyearmods = c(list("Epicea"=mod_deb_Pabi_Alt), altyearmods)
 deb_Pabi_10ans = deb_Pabi[deb_Pabi$year <= 2016,]
-mod_deb_Pabi_all_10ans <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|nom_zone), deb_Pabi_10ans, REML=F)
+mod_deb_Pabi_all_10ans <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|ID_zone), deb_Pabi_10ans, REML=F)
 summary(mod_deb_Pabi_all_10ans)
 # => L'effet altitude est beaucoup plus faible que Bison et al 2019 ! =============================       /!\ /!\ /!\
 
@@ -1108,7 +1156,7 @@ n = nrow(deb_Pabi)
 trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
 train <- deb_Pabi[trainIndex ,]
 test <- deb_Pabi[-trainIndex ,]
-test1 <- test[!test$nom_zone%in%(unique(deb_Pabi$nom_zone[drop=T])[!unique(deb_Pabi$nom_zone[drop=T])%in%unique(train$nom_zone[drop=T])]),]
+test1 <- test[!test$ID_zone%in%(unique(deb_Pabi$ID_zone[drop=T])[!unique(deb_Pabi$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
 mod_train <- lmer(formula(mod_deb_Pabi_Alt), train)
 predictions <- mod_train %>% predict(test1)
 test2 <- cbind(test1, predictions)
@@ -1119,22 +1167,25 @@ R2_models[R2_models$species == "Epicea", "R2_altyear_calibval"] = summary(lm(pre
 
 #*-------- 2) On teste l'effet de différentes variables de température à la place des variables année et altitude ---- 
 # On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
-mod_deb_Pabi_Tmoy30j <- lmer(julian_day ~ Tmoy30j + (1|nom_zone) + (1|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_Tmoy40j <- lmer(julian_day ~ Tmoy40j + (1|nom_zone) + (1|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_Tmoy50j <- lmer(julian_day ~ Tmoy50j + (1|nom_zone) + (1|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_GDD0 <- lmer(julian_day ~ GDD0 + (1|nom_zone) + (1|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_GDD5 <- lmer(julian_day ~ GDD5 + (1|nom_zone) + (1|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|nom_zone) + (1|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_dChill <- lmer(julian_day ~ dChill + (1|nom_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_Tmoy30j <- lmer(julian_day ~ Tmoy30j + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_Tmoy40j <- lmer(julian_day ~ Tmoy40j + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_Tmoy50j <- lmer(julian_day ~ Tmoy50j + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_gel30j <- lmer(julian_day ~ gel30j + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_gel40j <- lmer(julian_day ~ gel40j + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_gel50j <- lmer(julian_day ~ gel50j + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_GDD0 <- lmer(julian_day ~ GDD0 + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_GDD5 <- lmer(julian_day ~ GDD5 + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_dChill <- lmer(julian_day ~ dChill + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
 
-AIC(mod_deb_Pabi_Tmoy30j) ; AIC(mod_deb_Pabi_Tmoy40j) ; AIC(mod_deb_Pabi_Tmoy50j) ; AIC(mod_deb_Pabi_GDD0) ; AIC(mod_deb_Pabi_GDD5); AIC(mod_deb_Pabi_Tmoyhiv) ; AIC(mod_deb_Pabi_dChill)
+AIC(mod_deb_Pabi_Tmoy30j) ; AIC(mod_deb_Pabi_Tmoy40j) ; AIC(mod_deb_Pabi_Tmoy50j) ; AIC(mod_deb_Pabi_gel30j) ; AIC(mod_deb_Pabi_gel40j) ; AIC(mod_deb_Pabi_gel50j) ; AIC(mod_deb_Pabi_GDD0) ; AIC(mod_deb_Pabi_GDD5); AIC(mod_deb_Pabi_Tmoyhiv) ; AIC(mod_deb_Pabi_dChill)
 # La variable Tmoy50j donne les meilleurs résultats : c'est celle qu'on garde pour la suite
 # /!\ Quand on ajoute d'autres variables, notamment l'altitude, Tmoyhiv devient meilleure !! ======================================== /!\ /!\ /!\
 
 # NB : on peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
-mod_deb_Pabi_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|nom_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + gel30j + gel40j + gel50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
 # On enlève les variables une par une.. jusqu'à avoir le meilleur AIC
-mod_deb_Pabi_multiT = lmer(julian_day ~ Tmoy50j + Tmoyhiv + (1|nom_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_multiT = lmer(julian_day ~ Tmoy50j + gel30j + GDD5 + Tmoyhiv + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F) # AIC = 10217.52
 # On garde en tête ces multivariables de température pour la suite
 
 # ggplot(deb_Pabi, aes(x=year, y=GDD0, col=cl_alt)) + geom_point() + geom_smooth(method="lm")
@@ -1148,36 +1199,36 @@ mod_deb_Pabi_multiT = lmer(julian_day ~ Tmoy50j + Tmoyhiv + (1|nom_zone) + (1|ye
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-mod_deb_Pabi_GDD0_Alt <- lmer(julian_day ~ GDD0 + altitude + (1|nom_zone) + (1|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_GDD0_clAlt <- lmer(julian_day ~ GDD0 * cl_alt + (1|nom_zone) + (1|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_GDD0_Alt_ <- lmer(julian_day ~ GDD0 + altitude + (1|nom_zone) + (GDD0|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_GDD0_clAlt_ <- lmer(julian_day ~ GDD0 * cl_alt + (1|nom_zone) + (GDD0|yearQ), deb_Pabi, REML=F)
-AIC(mod_deb_Pabi_GDD0) ; AIC(mod_deb_Pabi_GDD0_Alt) ; AIC(mod_deb_Pabi_GDD0_clAlt) ; AIC(mod_deb_Pabi_GDD0_Alt_) ; AIC(mod_deb_Pabi_GDD0_clAlt_)
-mod_deb_Pabi_Tmoyhiv_Alt <- lmer(julian_day ~ Tmoyhiv + altitude + (1|nom_zone) + (1|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_Tmoyhiv_year <- lmer(julian_day ~ Tmoyhiv + year + (1|nom_zone) + (1|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_Tmoyhiv_clAlt <- lmer(julian_day ~ Tmoyhiv * cl_alt + (1|nom_zone) + (1|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_Tmoyhiv_Alt_ <- lmer(julian_day ~ Tmoyhiv + altitude + (1|nom_zone) + (Tmoyhiv|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_Tmoyhiv_clAlt_ <- lmer(julian_day ~ Tmoyhiv * cl_alt + (1|nom_zone) + (Tmoyhiv|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_Tmoyhiv_clAlt_year <- lmer(julian_day ~ Tmoyhiv * cl_alt + year + (1|nom_zone) + (Tmoyhiv|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_gel30j_Alt <- lmer(julian_day ~ gel30j + altitude + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_gel30j_clAlt <- lmer(julian_day ~ gel30j * cl_alt + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_gel30j_Alt_ <- lmer(julian_day ~ gel30j + altitude + (1|ID_zone) + (gel30j|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_gel30j_clAlt_ <- lmer(julian_day ~ gel30j * cl_alt + (1|ID_zone) + (gel30j|yearQ), deb_Pabi, REML=F)
+AIC(mod_deb_Pabi_gel30j) ; AIC(mod_deb_Pabi_gel30j_Alt) ; AIC(mod_deb_Pabi_gel30j_clAlt) ; AIC(mod_deb_Pabi_gel30j_Alt_) ; AIC(mod_deb_Pabi_gel30j_clAlt_)
+mod_deb_Pabi_Tmoyhiv_Alt <- lmer(julian_day ~ Tmoyhiv + altitude + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_Tmoyhiv_year <- lmer(julian_day ~ Tmoyhiv + year + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_Tmoyhiv_clAlt <- lmer(julian_day ~ Tmoyhiv * cl_alt + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_Tmoyhiv_Alt_ <- lmer(julian_day ~ Tmoyhiv + altitude + (1|ID_zone) + (Tmoyhiv|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_Tmoyhiv_clAlt_ <- lmer(julian_day ~ Tmoyhiv * cl_alt + (1|ID_zone) + (Tmoyhiv|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_Tmoyhiv_clAlt_year <- lmer(julian_day ~ Tmoyhiv * cl_alt + year + (1|ID_zone) + (Tmoyhiv|yearQ), deb_Pabi, REML=F)
 AIC(mod_deb_Pabi_Tmoyhiv) ; AIC(mod_deb_Pabi_Tmoyhiv_Alt) ; AIC(mod_deb_Pabi_Tmoyhiv_year) ;AIC(mod_deb_Pabi_Tmoyhiv_clAlt) ; AIC(mod_deb_Pabi_Tmoyhiv_Alt_) ; AIC(mod_deb_Pabi_Tmoyhiv_clAlt_) ; AIC(mod_deb_Pabi_Tmoyhiv_clAlt_year)
-mod_deb_Pabi_Tmoy50j_Alt <- lmer(julian_day ~ Tmoy50j + altitude + (1|nom_zone) + (1|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_Tmoy50j_year <- lmer(julian_day ~ Tmoy50j + year + (1|nom_zone) + (1|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_Tmoy50j_clAlt <- lmer(julian_day ~ Tmoy50j * cl_alt + (1|nom_zone) + (1|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_Tmoy50j_Alt_ <- lmer(julian_day ~ Tmoy50j + altitude + (1|nom_zone) + (Tmoy50j|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_Tmoy50j_clAlt_ <- lmer(julian_day ~ Tmoy50j * cl_alt + (1|nom_zone) + (Tmoy50j|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_Tmoy50j_clAlt_year <- lmer(julian_day ~ Tmoy50j * cl_alt + year + (1|nom_zone) + (Tmoy50j|yearQ), deb_Pabi, REML=F)
-mod_deb_Pabi_Tmoy50jTmoyhiv_clAlt_year <- lmer(julian_day ~ (Tmoy50j + Tmoyhiv) * cl_alt + year + (1|nom_zone) + (Tmoy50j|yearQ), deb_Pabi, REML=F)
-AIC(mod_deb_Pabi_Tmoy50j) ; AIC(mod_deb_Pabi_Tmoy50j_Alt) ; AIC(mod_deb_Pabi_Tmoy50j_year) ;AIC(mod_deb_Pabi_Tmoy50j_clAlt) ; AIC(mod_deb_Pabi_Tmoy50j_Alt_) ; AIC(mod_deb_Pabi_Tmoy50j_clAlt_) ; AIC(mod_deb_Pabi_Tmoy50j_clAlt_year) ; AIC(mod_deb_Pabi_Tmoy50jTmoyhiv_clAlt_year)
-# Mieux avec l'altitude en plus, en prenant Tmoyhiv + Tmoy50j, et en ayant l'effet aléatoire 'année' sur la température et une interaction (AIC = 10185.16)
+mod_deb_Pabi_Tmoy50j_Alt <- lmer(julian_day ~ Tmoy50j + altitude + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_Tmoy50j_year <- lmer(julian_day ~ Tmoy50j + year + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_Tmoy50j_clAlt <- lmer(julian_day ~ Tmoy50j * cl_alt + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_Tmoy50j_Alt_ <- lmer(julian_day ~ Tmoy50j + altitude + (1|ID_zone) + (Tmoy50j|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_Tmoy50j_clAlt_ <- lmer(julian_day ~ Tmoy50j * cl_alt + (1|ID_zone) + (Tmoy50j|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_Tmoy50j_clAlt_year <- lmer(julian_day ~ Tmoy50j * cl_alt + year + (1|ID_zone) + (Tmoy50j|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_Tmoy50jTmoyhiv_clAlt_year <- lmer(julian_day ~ (Tmoy50j + Tmoyhiv) * cl_alt + year + (1|ID_zone) + (Tmoy50j|yearQ), deb_Pabi, REML=F)
+mod_deb_Pabi_Tmoy50jTmoyhivgel30j_clAlt_year <- lmer(julian_day ~ (Tmoy50j + gel30j + Tmoyhiv) * cl_alt + year + (1|ID_zone) + (Tmoy50j|yearQ), deb_Pabi, REML=F)
+AIC(mod_deb_Pabi_Tmoy50j) ; AIC(mod_deb_Pabi_Tmoy50j_Alt) ; AIC(mod_deb_Pabi_Tmoy50j_year) ;AIC(mod_deb_Pabi_Tmoy50j_clAlt) ; AIC(mod_deb_Pabi_Tmoy50j_Alt_) ; AIC(mod_deb_Pabi_Tmoy50j_clAlt_) ; AIC(mod_deb_Pabi_Tmoy50j_clAlt_year) ; AIC(mod_deb_Pabi_Tmoy50jTmoyhiv_clAlt_year) ; AIC(mod_deb_Pabi_Tmoy50jTmoyhivgel30j_clAlt_year)
+# Mieux avec l'altitude en plus, en prenant Tmoyhiv + Tmoy50j + gel30j, et en ayant l'effet aléatoire 'année' sur la température et une interaction (AIC = 10194.72)
 
 #========= MEILLEUR MODELE :
-bestmod_deb_Pabi = lmer(julian_day ~ (Tmoy50j + Tmoyhiv) * cl_alt + year + (1|nom_zone) + (Tmoy50j|yearQ), deb_Pabi, REML=F)
+bestmod_deb_Pabi = lmer(julian_day ~ Tmoy30j * altitude + (1|ID_zone) + (Tmoy30j|yearQ), deb_Pabi, REML=F) # AIC = 10189.21
 bestmods = c(list("Epicea"=bestmod_deb_Pabi), bestmods)
 
 summary(bestmod_deb_Pabi)
-visreg(bestmod_deb_Pabi, "Tmoyhiv", by="cl_alt")
-# gradient altitudinal : /!\ en classe et avec interaction !! 
-# effet de la température moyenne HIVERNALE : 1.1 jour d'avance quand on gagne 1°C MAIS dépend de l'altitude, avec un effet légèrement retard à basse altitude
+visreg(bestmod_deb_Pabi, "Tmoy30j", by="altitude")
+
 
 # EVALUATION DU MODELE
 # - Effets fixes VS tous les effets inclus
@@ -1189,7 +1240,7 @@ n = nrow(deb_Pabi)
 trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
 train <- deb_Pabi[trainIndex ,]
 test <- deb_Pabi[-trainIndex ,]
-test1 <- test[!test$nom_zone%in%(unique(deb_Pabi$nom_zone[drop=T])[!unique(deb_Pabi$nom_zone[drop=T])%in%unique(train$nom_zone[drop=T])]),]
+test1 <- test[!test$ID_zone%in%(unique(deb_Pabi$ID_zone[drop=T])[!unique(deb_Pabi$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
 mod_train <- lmer(formula(bestmod_deb_Pabi), train)
 predictions <- mod_train %>% predict(test1)
 test2 <- cbind(test1, predictions)
@@ -1204,12 +1255,12 @@ resultats = rbind(resultats, data.frame(species = "Epicea",
                                         coef = coef(summary(bestmod_deb_Pabi))[,1],
                                         std = coef(summary(bestmod_deb_Pabi))[,2],
                                         pval = coef(summary(bestmod_deb_Pabi))[,5],
-                                        varexpli = calcVarPart(bestmod_deb_Pabi)[rownames(coef(summary(bestmod_deb_Pabi)))]))
+                                        varexpli = tryCatch(calcVarPart(bestmod_deb_Pabi)[rownames(coef(summary(bestmod_deb_Pabi)))], error = function(e) return(NA))))
 
 
 # En utilisant ce même modèle mais pour la période 2006-2016 (cf article Bison et al), on obtient :
 deb_Pabi_10ans = deb_Pabi[deb_Pabi$year <= 2016,]
-bestmod_deb_Pabi_10ans <- lmer(julian_day ~ (Tmoy50j_med_0616 + Tmoyhiv_med_0616) * cl_alt + year + (1|nom_zone) + (Tmoy50j_med_0616|yearQ), deb_Pabi_10ans, REML=F)
+bestmod_deb_Pabi_10ans <- lmer(julian_day ~ Tmoy30j_med_0616 * altitude + (1|ID_zone) + (Tmoy30j_med_0616|yearQ), deb_Pabi_10ans, REML=F)
 summary(bestmod_deb_Pabi_10ans)
 # On a les mêmes tendances sur les deux périodes (même en prenant la température calculée avec la médiane des débourrements 2006-2016)
 
@@ -1220,8 +1271,7 @@ resultats = rbind(resultats, data.frame(species = "Epicea",
                                         coef = coef(summary(bestmod_deb_Pabi_10ans))[,1],
                                         std = coef(summary(bestmod_deb_Pabi_10ans))[,2],
                                         pval = coef(summary(bestmod_deb_Pabi_10ans))[,5],
-                                        # varexpli = calcVarPart(bestmod_deb_Pabi_10ans)[rownames(coef(summary(bestmod_deb_Pabi_10ans)))]))
-                                        varexpli = NA))
+                                        varexpli = tryCatch(calcVarPart(bestmod_deb_Pabi_10ans)[rownames(coef(summary(bestmod_deb_Pabi_10ans)))], error = function(e) return(NA))))
 
 
 
@@ -1236,10 +1286,11 @@ deb_Sacu = deb_Sacu[!is.na(deb_Sacu$altitude),]
 # ggplot(deb_Sacu, aes(x=year, y=julian_day)) + geom_point() + geom_smooth(method=lm) + labs(title = "Débourrement 10% - Sorbier", x="année",y="jour julien")
 
 #*-------- 1) On reprend le modèle de Bison et al. 2019, pour voir si on a à peu près les mêmes résultats ---- 
-mod_deb_Sacu_Alt <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|nom_zone), deb_Sacu, REML=F)
+mod_deb_Sacu_Alt <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|ID_zone), deb_Sacu, REML=F)
 summary(mod_deb_Sacu_Alt)
+altyearmods = c(list("Sorbier"=mod_deb_Sacu_Alt), altyearmods)
 deb_Sacu_10ans = deb_Sacu[deb_Sacu$year <= 2016,]
-mod_deb_Sacu_all_10ans <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|nom_zone), deb_Sacu_10ans, REML=F)
+mod_deb_Sacu_all_10ans <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|ID_zone), deb_Sacu_10ans, REML=F)
 summary(mod_deb_Sacu_all_10ans)
 # => OK : on retrouve à peu près les mêmes résultats que Bison et al 2019 (mais effet année plus faible)
 
@@ -1250,33 +1301,36 @@ n = nrow(deb_Sacu)
 trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
 train <- deb_Sacu[trainIndex ,]
 test <- deb_Sacu[-trainIndex ,]
-test1 <- test[!test$nom_zone%in%(unique(deb_Sacu$nom_zone[drop=T])[!unique(deb_Sacu$nom_zone[drop=T])%in%unique(train$nom_zone[drop=T])]),]
+test1 <- test[!test$ID_zone%in%(unique(deb_Sacu$ID_zone[drop=T])[!unique(deb_Sacu$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
 mod_train <- lmer(formula(mod_deb_Sacu_Alt), train)
 predictions <- mod_train %>% predict(test1)
 test2 <- cbind(test1, predictions)
 # summary(lm(predictions~julian_day, test2))
-# # R2 ajusté = 0.4935
+# # R2 ajusté = 0.613
 R2_models[R2_models$species == "Sorbier", "R2_altyear_calibval"] = summary(lm(predictions~julian_day, test2))[["adj.r.squared"]]
 
 
 #*-------- 2) On teste l'effet de différentes variables de température à la place des variables année et altitude ---- 
 # On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
-mod_deb_Sacu_Tmoy30j <- lmer(julian_day ~ Tmoy30j + (1|nom_zone) + (1|yearQ), deb_Sacu, REML=F)
-mod_deb_Sacu_Tmoy40j <- lmer(julian_day ~ Tmoy40j + (1|nom_zone) + (1|yearQ), deb_Sacu, REML=F)
-mod_deb_Sacu_Tmoy50j <- lmer(julian_day ~ Tmoy50j + (1|nom_zone) + (1|yearQ), deb_Sacu, REML=F)
-mod_deb_Sacu_GDD0 <- lmer(julian_day ~ GDD0 + (1|nom_zone) + (1|yearQ), deb_Sacu, REML=F)
-mod_deb_Sacu_GDD5 <- lmer(julian_day ~ GDD5 + (1|nom_zone) + (1|yearQ), deb_Sacu, REML=F)
-mod_deb_Sacu_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|nom_zone) + (1|yearQ), deb_Sacu, REML=F)
-mod_deb_Sacu_dChill <- lmer(julian_day ~ dChill + (1|nom_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_Tmoy30j <- lmer(julian_day ~ Tmoy30j + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_Tmoy40j <- lmer(julian_day ~ Tmoy40j + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_Tmoy50j <- lmer(julian_day ~ Tmoy50j + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_gel30j <- lmer(julian_day ~ gel30j + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_gel40j <- lmer(julian_day ~ gel40j + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_gel50j <- lmer(julian_day ~ gel50j + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_GDD0 <- lmer(julian_day ~ GDD0 + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_GDD5 <- lmer(julian_day ~ GDD5 + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_dChill <- lmer(julian_day ~ dChill + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
 
-AIC(mod_deb_Sacu_Tmoy30j) ; AIC(mod_deb_Sacu_Tmoy40j) ; AIC(mod_deb_Sacu_Tmoy50j) ; AIC(mod_deb_Sacu_GDD0) ; AIC(mod_deb_Sacu_GDD5); AIC(mod_deb_Sacu_Tmoyhiv) ; AIC(mod_deb_Sacu_dChill)
+AIC(mod_deb_Sacu_Tmoy30j) ; AIC(mod_deb_Sacu_Tmoy40j) ; AIC(mod_deb_Sacu_Tmoy50j) ; AIC(mod_deb_Sacu_gel30j) ; AIC(mod_deb_Sacu_gel40j) ; AIC(mod_deb_Sacu_gel50j) ; AIC(mod_deb_Sacu_GDD0) ; AIC(mod_deb_Sacu_GDD5); AIC(mod_deb_Sacu_Tmoyhiv) ; AIC(mod_deb_Sacu_dChill)
 # Les variables Tmoy40j et GDD0 donnent les meilleurs résultats 
 
 # NB : on peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
-mod_deb_Sacu_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|nom_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + gel30j + gel40j + gel50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
 # On enlève les variables une par une : Il reste 4 variables dans le modèle avec le meilleur AIC... MAIS les variables restantes sont quand même 
 # fortement corrélées, et pas toutes significatives, donc on en retire encore 2
-mod_deb_Sacu_multiT = lmer(julian_day ~ dChill + GDD0 + (1|nom_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_multiT = lmer(julian_day ~ Tmoy40j + gel50j + dChill + GDD0 + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F) # AIC = 5728.5
 # On garde en tête ces multivariables de température pour la suite
 
 # ggplot(deb_Sacu, aes(x=year, y=Tmoy30j, col=cl_alt)) + geom_point() + geom_smooth(method="lm")
@@ -1290,22 +1344,22 @@ mod_deb_Sacu_multiT = lmer(julian_day ~ dChill + GDD0 + (1|nom_zone) + (1|yearQ)
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-mod_deb_Sacu_GDD0_Alt <- lmer(julian_day ~ GDD0 + altitude + (1|nom_zone) + (1|yearQ), deb_Sacu, REML=F)
-mod_deb_Sacu_GDD0dChill_Alt <- lmer(julian_day ~ GDD0 + dChill + altitude + (1|nom_zone) + (1|yearQ), deb_Sacu, REML=F)
-mod_deb_Sacu_GDD0_year <- lmer(julian_day ~ GDD0 + altitude + year + (1|nom_zone) + (1|yearQ), deb_Sacu, REML=F)
-mod_deb_Sacu_GDD0_clAlt <- lmer(julian_day ~ GDD0 * cl_alt + (1|nom_zone) + (1|yearQ), deb_Sacu, REML=F)
-mod_deb_Sacu_GDD0_Alt_ <- lmer(julian_day ~ GDD0 + altitude + (1|nom_zone) + (GDD0|yearQ), deb_Sacu, REML=F)
-mod_deb_Sacu_GDD0_clAlt_ <- lmer(julian_day ~ GDD0 * cl_alt + (1|nom_zone) + (GDD0|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_GDD0_Alt <- lmer(julian_day ~ GDD0 + altitude + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_GDD0dChill_Alt <- lmer(julian_day ~ GDD0 + dChill + altitude + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_GDD0_year <- lmer(julian_day ~ GDD0 + altitude + year + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_GDD0_clAlt <- lmer(julian_day ~ GDD0 * cl_alt + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_GDD0_Alt_ <- lmer(julian_day ~ GDD0 + altitude + (1|ID_zone) + (GDD0|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_GDD0_clAlt_ <- lmer(julian_day ~ GDD0 * cl_alt + (1|ID_zone) + (GDD0|yearQ), deb_Sacu, REML=F)
 AIC(mod_deb_Sacu_GDD0) ; AIC(mod_deb_Sacu_GDD0_Alt) ; AIC(mod_deb_Sacu_GDD0dChill_Alt) ; AIC(mod_deb_Sacu_GDD0_year) ; AIC(mod_deb_Sacu_GDD0_clAlt) ; AIC(mod_deb_Sacu_GDD0_Alt_) ; AIC(mod_deb_Sacu_GDD0_clAlt_)
 # Mieux avec l'altitude en plus (AIC = 5701.37)
 
 #========= MEILLEUR MODELE :
-bestmod_deb_Sacu = lmer(julian_day ~ GDD0 + dChill + altitude + (1|nom_zone) + (1|yearQ), deb_Sacu, REML=F)
+bestmod_deb_Sacu = lmer(julian_day ~ GDD0 + dChill + altitude + (1|ID_zone) + (dChill|yearQ), deb_Sacu, REML=F) # AIC = 5712.1
 bestmods = c(list("Sorbier"=bestmod_deb_Sacu), bestmods)
 
 summary(bestmod_deb_Sacu)
-# gradient altitudinal : 2.1 jours de retard quand on monte de 100m
-# effet des GDD0 cumulés avant la date médiane de débourrement : 0.03 jours de RETARD quand on gagne 1°C.J
+# gradient altitudinal : 1.9 jours de retard quand on monte de 100m
+# effet des GDD0 cumulés avant la date médiane de débourrement : 0.04 jours d'avance quand on gagne 1°C.J
 
 # EVALUATION DU MODELE
 # - Effets fixes VS tous les effets inclus
@@ -1317,7 +1371,7 @@ n = nrow(deb_Sacu)
 trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
 train <- deb_Sacu[trainIndex ,]
 test <- deb_Sacu[-trainIndex ,]
-test1 <- test[!test$nom_zone%in%(unique(deb_Sacu$nom_zone[drop=T])[!unique(deb_Sacu$nom_zone[drop=T])%in%unique(train$nom_zone[drop=T])]),]
+test1 <- test[!test$ID_zone%in%(unique(deb_Sacu$ID_zone[drop=T])[!unique(deb_Sacu$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
 mod_train <- lmer(formula(bestmod_deb_Sacu), train)
 predictions <- mod_train %>% predict(test1)
 test2 <- cbind(test1, predictions)
@@ -1332,12 +1386,12 @@ resultats = rbind(resultats, data.frame(species = "Sorbier",
                                         coef = coef(summary(bestmod_deb_Sacu))[,1],
                                         std = coef(summary(bestmod_deb_Sacu))[,2],
                                         pval = coef(summary(bestmod_deb_Sacu))[,5],
-                                        varexpli = calcVarPart(bestmod_deb_Sacu)[rownames(coef(summary(bestmod_deb_Sacu)))]))
+                                        varexpli = tryCatch(calcVarPart(bestmod_deb_Sacu)[rownames(coef(summary(bestmod_deb_Sacu)))], error = function(e) return(NA))))
 
 
 # En utilisant ce même modèle mais pour la période 2006-2016 (cf article Bison et al), on obtient :
 deb_Sacu_10ans = deb_Sacu[deb_Sacu$year <= 2016,]
-bestmod_deb_Sacu_10ans <- lmer(julian_day ~ GDD0_med_0616 + dChill_med_0616 + altitude + (1|nom_zone) + (1|yearQ), deb_Sacu_10ans, REML=F)
+bestmod_deb_Sacu_10ans <- lmer(julian_day ~ GDD0_med_0616 + dChill_med_0616 + altitude + (1|ID_zone) + (dChill_med_0616|yearQ), deb_Sacu_10ans, REML=F)
 summary(bestmod_deb_Sacu_10ans)
 # On a les mêmes tendances sur les deux périodes mais le gradient altitudinale est plus faible
 
@@ -1348,7 +1402,7 @@ resultats = rbind(resultats, data.frame(species = "Sorbier",
                                         coef = coef(summary(bestmod_deb_Sacu_10ans))[,1],
                                         std = coef(summary(bestmod_deb_Sacu_10ans))[,2],
                                         pval = coef(summary(bestmod_deb_Sacu_10ans))[,5],
-                                        varexpli = calcVarPart(bestmod_deb_Sacu_10ans)[rownames(coef(summary(bestmod_deb_Sacu_10ans)))]))
+                                        varexpli = tryCatch(calcVarPart(bestmod_deb_Sacu_10ans)[rownames(coef(summary(bestmod_deb_Sacu_10ans)))], error = function(e) return(NA))))
 
 ##############################################-
 #*---- Lilas ----
@@ -1360,10 +1414,11 @@ deb_Svul = deb_Svul[!is.na(deb_Svul$Tmoy30j),]
 # ggplot(deb_Svul, aes(x=year, y=julian_day)) + geom_point() + geom_smooth(method=lm) + labs(title = "Débourrement 10% - Lilas", x="année",y="jour julien")
 
 #*-------- 1) On reprend le modèle de Bison et al. 2019, pour voir si on a à peu près les mêmes résultats ---- 
-mod_deb_Svul_Alt <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|nom_zone), deb_Svul, REML=F)
+mod_deb_Svul_Alt <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|ID_zone), deb_Svul, REML=F)
 summary(mod_deb_Svul_Alt)
+altyearmods = c(list("Lilas"=mod_deb_Svul_Alt), altyearmods)
 # deb_Svul_10ans = deb_Svul[deb_Svul$year <= 2016,]
-# mod_deb_Svul_all_10ans <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|nom_zone), deb_Svul_10ans, REML=F)
+# mod_deb_Svul_all_10ans <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|ID_zone), deb_Svul_10ans, REML=F)
 # summary(mod_deb_Svul_all_10ans)
 # => OK : on retrouve à peu près les mêmes résultats que Bison et al 2019 (mais résultat pas indiqué pour la première période !)
 
@@ -1374,7 +1429,7 @@ n = nrow(deb_Svul)
 trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
 train <- deb_Svul[trainIndex ,]
 test <- deb_Svul[-trainIndex ,]
-test1 <- test[!test$nom_zone%in%(unique(deb_Svul$nom_zone[drop=T])[!unique(deb_Svul$nom_zone[drop=T])%in%unique(train$nom_zone[drop=T])]),]
+test1 <- test[!test$ID_zone%in%(unique(deb_Svul$ID_zone[drop=T])[!unique(deb_Svul$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
 mod_train <- lmer(formula(mod_deb_Svul_Alt), train)
 predictions <- mod_train %>% predict(test1)
 test2 <- cbind(test1, predictions)
@@ -1385,22 +1440,25 @@ R2_models[R2_models$species == "Lilas", "R2_altyear_calibval"] = summary(lm(pred
 
 #*-------- 2) On teste l'effet de différentes variables de température à la place des variables année et altitude ---- 
 # On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
-mod_deb_Svul_Tmoy30j <- lmer(julian_day ~ Tmoy30j + (1|nom_zone) + (1|yearQ), deb_Svul, REML=F)
-mod_deb_Svul_Tmoy40j <- lmer(julian_day ~ Tmoy40j + (1|nom_zone) + (1|yearQ), deb_Svul, REML=F)
-mod_deb_Svul_Tmoy50j <- lmer(julian_day ~ Tmoy50j + (1|nom_zone) + (1|yearQ), deb_Svul, REML=F)
-mod_deb_Svul_GDD0 <- lmer(julian_day ~ GDD0 + (1|nom_zone) + (1|yearQ), deb_Svul, REML=F)
-mod_deb_Svul_GDD5 <- lmer(julian_day ~ GDD5 + (1|nom_zone) + (1|yearQ), deb_Svul, REML=F)
-mod_deb_Svul_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|nom_zone) + (1|yearQ), deb_Svul, REML=F)
-mod_deb_Svul_dChill <- lmer(julian_day ~ dChill + (1|nom_zone) + (1|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_Tmoy30j <- lmer(julian_day ~ Tmoy30j + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_Tmoy40j <- lmer(julian_day ~ Tmoy40j + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_Tmoy50j <- lmer(julian_day ~ Tmoy50j + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_gel30j <- lmer(julian_day ~ gel30j + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_gel40j <- lmer(julian_day ~ gel40j + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_gel50j <- lmer(julian_day ~ gel50j + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_GDD0 <- lmer(julian_day ~ GDD0 + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_GDD5 <- lmer(julian_day ~ GDD5 + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_dChill <- lmer(julian_day ~ dChill + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F)
 
-AIC(mod_deb_Svul_Tmoy30j) ; AIC(mod_deb_Svul_Tmoy40j) ; AIC(mod_deb_Svul_Tmoy50j) ; AIC(mod_deb_Svul_GDD0) ; AIC(mod_deb_Svul_GDD5); AIC(mod_deb_Svul_Tmoyhiv) ; AIC(mod_deb_Svul_dChill)
-# La variable Tmoy30j donne les meilleurs résultats : c'est celle qu'on garde pour la suite
+AIC(mod_deb_Svul_Tmoy30j) ; AIC(mod_deb_Svul_Tmoy40j) ; AIC(mod_deb_Svul_Tmoy50j) ; AIC(mod_deb_Svul_gel30j) ; AIC(mod_deb_Svul_gel40j) ; AIC(mod_deb_Svul_gel50j) ; AIC(mod_deb_Svul_GDD0) ; AIC(mod_deb_Svul_GDD5); AIC(mod_deb_Svul_Tmoyhiv) ; AIC(mod_deb_Svul_dChill)
+# Les variables Tmoy30j et gel30j donnent les meilleurs résultats : c'est celle qu'on garde pour la suite
 
 # NB : on peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
-mod_deb_Svul_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|nom_zone) + (1|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + gel30j + gel40j + gel50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F)
 # On enlève les variables une par une : Tmoy30j puis dChill puis Tmoyhiv puis Tmoy50j--> c'est le modèle avec le meilleur AIC... MAIS les variables
 # restantes sont quand même fortement corrélées...!
-mod_deb_Svul_multiT = lmer(julian_day ~ Tmoy30j + (1|nom_zone) + (1|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_multiT = lmer(julian_day ~ Tmoy30j + gel30j + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F) # AIC = 4273.4
 # On garde en tête ces multivariables de température pour la suite
 
 # ggplot(deb_Svul, aes(x=year, y=Tmoy30j, col=cl_alt)) + geom_point() + geom_smooth(method="lm")
@@ -1414,22 +1472,24 @@ mod_deb_Svul_multiT = lmer(julian_day ~ Tmoy30j + (1|nom_zone) + (1|yearQ), deb_
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-mod_deb_Svul_Tmoy30j_Alt <- lmer(julian_day ~ Tmoy30j + altitude + (1|nom_zone) + (1|yearQ), deb_Svul, REML=F)
-mod_deb_Svul_Tmoy30j_year <- lmer(julian_day ~ Tmoy30j + year + (1|nom_zone) + (1|yearQ), deb_Svul, REML=F)
-mod_deb_Svul_Tmoy30j_clAlt <- lmer(julian_day ~ Tmoy30j * cl_alt + (1|nom_zone) + (1|yearQ), deb_Svul, REML=F)
-mod_deb_Svul_Tmoy30j_Alt_ <- lmer(julian_day ~ Tmoy30j + altitude + (1|nom_zone) + (Tmoy30j|yearQ), deb_Svul, REML=F)
-mod_deb_Svul_Tmoy30j_clAlt_ <- lmer(julian_day ~ Tmoy30j * cl_alt + (1|nom_zone) + (Tmoy30j|yearQ), deb_Svul, REML=F)
-AIC(mod_deb_Svul_Tmoy30j) ; AIC(mod_deb_Svul_Tmoy30j_Alt) ; AIC(mod_deb_Svul_Tmoy30j_year) ; AIC(mod_deb_Svul_Tmoy30j_clAlt) ; AIC(mod_deb_Svul_Tmoy30j_Alt_) ; AIC(mod_deb_Svul_Tmoy30j_clAlt_)
-# Mieux avec l'interaction altitude (AIC = 4232.425)
+mod_deb_Svul_Tmoy30j_Alt <- lmer(julian_day ~ Tmoy30j + altitude + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_Tmoy30j_year <- lmer(julian_day ~ Tmoy30j + year + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_Tmoy30j_clAlt <- lmer(julian_day ~ Tmoy30j * cl_alt + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_Tmoy30j_Alt_ <- lmer(julian_day ~ Tmoy30j + altitude + (1|ID_zone) + (Tmoy30j|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_Tmoy30jgel30j_Alt_ <- lmer(julian_day ~ Tmoy30j + gel30j + altitude + (1|ID_zone) + (Tmoy30j|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_gel30j_Alt_ <- lmer(julian_day ~ gel30j + altitude + (1|ID_zone) + (gel30j|yearQ), deb_Svul, REML=F)
+mod_deb_Svul_Tmoy30j_clAlt_ <- lmer(julian_day ~ Tmoy30j * cl_alt + (1|ID_zone) + (Tmoy30j|yearQ), deb_Svul, REML=F)
+AIC(mod_deb_Svul_Tmoy30j) ; AIC(mod_deb_Svul_Tmoy30j_Alt) ; AIC(mod_deb_Svul_Tmoy30j_year) ; AIC(mod_deb_Svul_Tmoy30j_clAlt) ; AIC(mod_deb_Svul_Tmoy30j_Alt_) ; AIC(mod_deb_Svul_Tmoy30jgel30j_Alt_) ; AIC(mod_deb_Svul_gel30j_Alt_) ; AIC(mod_deb_Svul_Tmoy30j_clAlt_)
+# Mieux avec l'ajout altitude (AIC = 4241.98)
 
 #========= MEILLEUR MODELE :
-bestmod_deb_Svul = lmer(julian_day ~ Tmoy30j + altitude + (1|nom_zone) + (Tmoy30j|yearQ), deb_Svul, REML=F)
+bestmod_deb_Svul = lmer(julian_day ~ altitude + gel30j + (1|ID_zone) + (gel30j|yearQ), deb_Svul, REML=F) # AIC = 4259.7
 bestmods = c(list("Lilas"=bestmod_deb_Svul), bestmods)
 
 summary(bestmod_deb_Svul)
-visreg(bestmod_deb_Svul, "Tmoy30j", by="altitude")
+visreg(bestmod_deb_Svul, "gel30j", by="altitude")
 # gradient altitudinal : 2.0 jours de retard quand on monte de 100m
-# effet des Tmoy30j cumulés avant la date médiane de débourrement : 2.3 jours d'avance quand on gagne 1°C.J
+# effet du nombre de jours de gel 30 j avant la date médiane de débourrement : 0.5 jours de retard par jour de gel
 
 # EVALUATION DU MODELE
 # - Effets fixes VS tous les effets inclus
@@ -1441,7 +1501,7 @@ n = nrow(deb_Svul)
 trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
 train <- deb_Svul[trainIndex ,]
 test <- deb_Svul[-trainIndex ,]
-test1 <- test[!test$nom_zone%in%(unique(deb_Svul$nom_zone[drop=T])[!unique(deb_Svul$nom_zone[drop=T])%in%unique(train$nom_zone[drop=T])]),]
+test1 <- test[!test$ID_zone%in%(unique(deb_Svul$ID_zone[drop=T])[!unique(deb_Svul$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
 mod_train <- lmer(formula(bestmod_deb_Svul), train)
 predictions <- mod_train %>% predict(test1)
 test2 <- cbind(test1, predictions)
@@ -1456,12 +1516,12 @@ resultats = rbind(resultats, data.frame(species = "Lilas",
                                         coef = coef(summary(bestmod_deb_Svul))[,1],
                                         std = coef(summary(bestmod_deb_Svul))[,2],
                                         pval = coef(summary(bestmod_deb_Svul))[,5],
-                                        varexpli = calcVarPart(bestmod_deb_Svul)[rownames(coef(summary(bestmod_deb_Svul)))]))
+                                        varexpli = tryCatch(calcVarPart(bestmod_deb_Svul)[rownames(coef(summary(bestmod_deb_Svul)))], error = function(e) return(NA))))
 
 
 # En utilisant ce même modèle mais pour la période 2006-2016 (cf article Bison et al), on obtient :
 deb_Svul_10ans = deb_Svul[deb_Svul$year <= 2016,]
-bestmod_deb_Svul_10ans <- lmer(julian_day ~ Tmoy30j_med_0616+ altitude + (1|nom_zone) + (Tmoy30j_med_0616|yearQ), deb_Svul_10ans, REML=F)
+bestmod_deb_Svul_10ans <- lmer(julian_day ~ altitude + gel30j_med_0616+ (1|ID_zone) + (gel30j_med_0616|yearQ), deb_Svul_10ans, REML=F)
 summary(bestmod_deb_Svul_10ans)
 # On a les mêmes tendances sur les deux périodes mais le gradient de température est un peu plus faible
 
@@ -1472,17 +1532,403 @@ resultats = rbind(resultats, data.frame(species = "Lilas",
                                         coef = coef(summary(bestmod_deb_Svul_10ans))[,1],
                                         std = coef(summary(bestmod_deb_Svul_10ans))[,2],
                                         pval = coef(summary(bestmod_deb_Svul_10ans))[,5],
-                                        varexpli = calcVarPart(bestmod_deb_Svul_10ans)[rownames(coef(summary(bestmod_deb_Svul_10ans)))]))
+                                        varexpli = tryCatch(calcVarPart(bestmod_deb_Svul_10ans)[rownames(coef(summary(bestmod_deb_Svul_10ans)))], error = function(e) return(NA))))
 
 
 
 
 
+
+##############################################-
+#*---- Hetre ----
+
+# /!\ Espèce ajoutée en 2018 !! 
+#     => Pas incluse dans l'étude de Bison et al. 2019
+#     => Ne pas l'inclure dans le calcul des indices
+
+deb_Fsyl = debourr_Alps[debourr_Alps$species == "Hetre",]
+# ggplot(deb_Fsyl, aes(x=year)) + geom_histogram(binwidth=1) 
+# # on voit qu'il y a peu de données en 2005, les retirer (parce qu'on n'a pas d'information de température) ne devrait pas changer grand-chose
+deb_Fsyl = deb_Fsyl[!is.na(deb_Fsyl$Tmoy30j),]
+# ggplot(deb_Fsyl, aes(x=year, y=julian_day)) + geom_point() + geom_smooth(method=lm) + labs(title = "Débourrement 10% - Bouleau", x="année",y="jour julien")
+
+#*-------- 1) On reprend le modèle de Bison et al. 2019, pour voir si on a à peu près les mêmes résultats ---- 
+mod_deb_Fsyl_Alt <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|ID_zone), deb_Fsyl, REML=F)
+summary(mod_deb_Fsyl_Alt)
+altyearmods = c(list("Hetre"=mod_deb_Fsyl_Alt), altyearmods)
+
+# On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
+R2_models[R2_models$species == "Hetre", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_deb_Fsyl_Alt)
+# + Validation croisée
+n = nrow(deb_Fsyl)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- deb_Fsyl[trainIndex ,]
+test <- deb_Fsyl[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(deb_Fsyl$ID_zone[drop=T])[!unique(deb_Fsyl$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_deb_Fsyl_Alt), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+# # R2 ajusté = 0.4343799
+R2_models[R2_models$species == "Hetre", "R2_altyear_calibval"] = summary(lm(predictions~julian_day, test2))[["adj.r.squared"]]
+
+
+#*-------- 2) On teste l'effet de différentes variables de température à la place des variables année et altitude ---- 
+# On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
+mod_deb_Fsyl_Tmoy30j <- lmer(julian_day ~ Tmoy30j + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F)
+mod_deb_Fsyl_Tmoy40j <- lmer(julian_day ~ Tmoy40j + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F)
+mod_deb_Fsyl_Tmoy50j <- lmer(julian_day ~ Tmoy50j + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F)
+mod_deb_Fsyl_gel30j <- lmer(julian_day ~ gel30j + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F)
+mod_deb_Fsyl_gel40j <- lmer(julian_day ~ gel40j + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F)
+mod_deb_Fsyl_gel50j <- lmer(julian_day ~ gel50j + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F)
+mod_deb_Fsyl_GDD0 <- lmer(julian_day ~ GDD0 + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F)
+mod_deb_Fsyl_GDD5 <- lmer(julian_day ~ GDD5 + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F)
+mod_deb_Fsyl_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F)
+mod_deb_Fsyl_dChill <- lmer(julian_day ~ dChill + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F)
+
+AIC(mod_deb_Fsyl_Tmoy30j) ; AIC(mod_deb_Fsyl_Tmoy40j) ; AIC(mod_deb_Fsyl_Tmoy50j) ; AIC(mod_deb_Fsyl_gel30j) ; AIC(mod_deb_Fsyl_gel40j) ; AIC(mod_deb_Fsyl_gel50j) ; AIC(mod_deb_Fsyl_GDD0) ; AIC(mod_deb_Fsyl_GDD5); AIC(mod_deb_Fsyl_Tmoyhiv) ; AIC(mod_deb_Fsyl_dChill)
+# La variable Tmoyhiv donne les meilleurs résultats 
+
+# NB : on peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
+# /!\ ce qui serait le plus logique serait de ne garder que la meilleure des 5 variables de Tmoy et GDD (cf corrélations) et éventuellement Tmoyhiv et/ou dChill
+mod_deb_Fsyl_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + gel30j + gel40j + gel50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F)
+# On enlève les variables une par une : dChill puis Tmoy30j puis Tmoyhiv --> c'est le modèle avec le meilleur AIC... MAIS GDD5 n'a pas un effet 
+# significatif au seuil 0.05... et les variables de température Tmoy+GDD sont super corrélées ! 
+# En combinant ces 3 critères (AIC, significativité des effets, variables peu corrélées), on retient donc :
+mod_deb_Fsyl_multiT = lmer(julian_day ~ Tmoy50j + gel40j +GDD5 + Tmoyhiv + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F) # AIC = 543.5
+# On garde en tête ces multivariables de température pour la suite
+
+# ggplot(deb_Fsyl, aes(x=year, y=Tmoy40j, col=cl_alt)) + geom_point() + geom_smooth(method="lm")
+
+# # Visualisation
+# ggplot(deb_Fsyl, aes(x=GDD0, y=julian_day)) + geom_point() + geom_smooth(method = "lm")
+# visreg(mod_deb_Fsyl_Tmoy40j, "Tmoy30j")
+
+#*-------- 3) On complexifie le modèle ---- 
+# On teste en complexifiant le modèle :
+# - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
+# - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
+#   s'il y a aussi des effets précipitations par exemple)
+
+# mod_deb_Fsyl_Tmoy40j_Alt <- lmer(julian_day ~ Tmoy40j + altitude + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F)
+# mod_deb_Fsyl_Tmoy40j_year <- lmer(julian_day ~ Tmoy40j + year + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F)
+# mod_deb_Fsyl_Tmoy40j_clAlt <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F)
+# mod_deb_Fsyl_Tmoy30j_Alt_ <- lmer(julian_day ~ Tmoy30j + altitude + (1|ID_zone) + (Tmoy30j|yearQ), deb_Fsyl, REML=F)
+# mod_deb_Fsyl_Tmoy40j_Alt_ <- lmer(julian_day ~ Tmoy40j + altitude + (1|ID_zone) + (Tmoy40j|yearQ), deb_Fsyl, REML=F)
+# mod_deb_Fsyl_Tmoy40j_clAlt_ <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|ID_zone) + (Tmoy40j|yearQ), deb_Fsyl, REML=F)
+# AIC(mod_deb_Fsyl_Tmoy40j) ; AIC(mod_deb_Fsyl_Tmoy40j_Alt) ; AIC(mod_deb_Fsyl_Tmoy40j_year) ; AIC(mod_deb_Fsyl_Tmoy40j_clAlt) ; AIC(mod_deb_Fsyl_Tmoy30j_Alt_) ; AIC(mod_deb_Fsyl_Tmoy40j_Alt_) ; AIC(mod_deb_Fsyl_Tmoy40j_clAlt_)
+# # Mieux avec l'altitude en plus, et en ayant l'effet aléatoire 'année' sur la température 
+
+#========= MEILLEUR MODELE (en limitant le nombre de variables explicatives) :
+bestmod_deb_Fsyl = lmer(julian_day ~ Tmoyhiv + Tmoy30j + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F) # AIC = 545.3
+bestmods = c(list("Hetre"=bestmod_deb_Fsyl), bestmods)
+
+
+summary(bestmod_deb_Fsyl)
+# effet de la température moyenne hivernale : 4.9 jour d'avance quand il a fait plus chaud l'hiver
+# effet de la température moyenne dans les 30 jours précédant le débourrement : 2.9 jour d'avance quand on gagne 1°C
+
+# EVALUATION DU MODELE
+# - Effets fixes VS tous les effets inclus
+R2_models[R2_models$species == "Hetre", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_deb_Fsyl)
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_deb_Fsyl)
+# - Validation croisée
+n = nrow(deb_Fsyl)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- deb_Fsyl[trainIndex ,]
+test <- deb_Fsyl[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(deb_Fsyl$ID_zone[drop=T])[!unique(deb_Fsyl$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(bestmod_deb_Fsyl), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+# # R2 ajusté = 0.7489
+R2_models[R2_models$species == "Hetre", "R2_bestmod_calibval"] = summary(lm(predictions~julian_day, test2))[["adj.r.squared"]]
+
+
+resultats = rbind(resultats, data.frame(species = "Hetre",
+                                        periode = "2006-2024",
+                                        variable = rownames(coef(summary(bestmod_deb_Fsyl))),
+                                        coef = coef(summary(bestmod_deb_Fsyl))[,1],
+                                        std = coef(summary(bestmod_deb_Fsyl))[,2],
+                                        pval = coef(summary(bestmod_deb_Fsyl))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_deb_Fsyl)[rownames(coef(summary(bestmod_deb_Fsyl)))], error = function(e) return(NA))))
+
+
+##############################################-
+#*---- Pin ----
+
+# /!\ Espèce ajoutée en 2018 !! 
+#     => Pas incluse dans l'étude de Bison et al. 2019
+#     => Ne pas l'inclure dans le calcul des indices
+
+deb_Psyl = debourr_Alps[debourr_Alps$species == "Pin",]
+# ggplot(deb_Psyl, aes(x=year)) + geom_histogram(binwidth=1) 
+# # on voit qu'il y a peu de données en 2005, les retirer (parce qu'on n'a pas d'information de température) ne devrait pas changer grand-chose
+deb_Psyl = deb_Psyl[!is.na(deb_Psyl$Tmoy30j),]
+# ggplot(deb_Psyl, aes(x=year, y=julian_day)) + geom_point() + geom_smooth(method=lm) + labs(title = "Débourrement 10% - Bouleau", x="année",y="jour julien")
+deb_Psyl = deb_Psyl[deb_Psyl$julian_day>50,] # On supprime une valeur bizarre de débourrement à 47 jours (plus d'un mois avant toutes les autres)
+
+#*-------- 1) On reprend le modèle de Bison et al. 2019, pour voir si on a à peu près les mêmes résultats ---- 
+mod_deb_Psyl_Alt <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|ID_zone), deb_Psyl, REML=F)
+summary(mod_deb_Psyl_Alt)
+altyearmods = c(list("Pin"=mod_deb_Psyl_Alt), altyearmods)
+
+# On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
+R2_models[R2_models$species == "Pin", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_deb_Psyl_Alt)
+# + Validation croisée
+n = nrow(deb_Psyl)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- deb_Psyl[trainIndex ,]
+test <- deb_Psyl[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(deb_Psyl$ID_zone[drop=T])[!unique(deb_Psyl$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_deb_Psyl_Alt), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+# # R2 ajusté = 0.6469443
+R2_models[R2_models$species == "Pin", "R2_altyear_calibval"] = summary(lm(predictions~julian_day, test2))[["adj.r.squared"]]
+
+
+#*-------- 2) On teste l'effet de différentes variables de température à la place des variables année et altitude ---- 
+# On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
+mod_deb_Psyl_Tmoy30j <- lmer(julian_day ~ Tmoy30j + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F)
+mod_deb_Psyl_Tmoy40j <- lmer(julian_day ~ Tmoy40j + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F)
+mod_deb_Psyl_Tmoy50j <- lmer(julian_day ~ Tmoy50j + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F)
+mod_deb_Psyl_gel30j <- lmer(julian_day ~ gel30j + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F)
+mod_deb_Psyl_gel40j <- lmer(julian_day ~ gel40j + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F)
+mod_deb_Psyl_gel50j <- lmer(julian_day ~ gel50j + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F)
+mod_deb_Psyl_GDD0 <- lmer(julian_day ~ GDD0 + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F)
+mod_deb_Psyl_GDD5 <- lmer(julian_day ~ GDD5 + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F)
+mod_deb_Psyl_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F)
+mod_deb_Psyl_dChill <- lmer(julian_day ~ dChill + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F)
+
+AIC(mod_deb_Psyl_Tmoy30j) ; AIC(mod_deb_Psyl_Tmoy40j) ; AIC(mod_deb_Psyl_Tmoy50j) ; AIC(mod_deb_Psyl_gel30j) ; AIC(mod_deb_Psyl_gel40j) ; AIC(mod_deb_Psyl_gel50j) ; AIC(mod_deb_Psyl_GDD0) ; AIC(mod_deb_Psyl_GDD5); AIC(mod_deb_Psyl_Tmoyhiv) ; AIC(mod_deb_Psyl_dChill)
+# La variable dChill donne les meilleurs résultats 
+
+# NB : on peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
+# /!\ ce qui serait le plus logique serait de ne garder que la meilleure des 5 variables de Tmoy et GDD (cf corrélations) et éventuellement Tmoyhiv et/ou dChill
+mod_deb_Psyl_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + gel30j + gel40j + gel50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F)
+# On enlève les variables une par une, en regardant leur significativité, leurs corrélations + l'AIC
+# En combinant ces 3 critères (AIC, significativité des effets, variables peu corrélées), on retient donc :
+mod_deb_Psyl_multiT = lmer(julian_day ~ dChill + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F) # AIC = 331.3
+# On garde en tête ces multivariables de température pour la suite
+
+# ggplot(deb_Psyl, aes(x=year, y=Tmoy40j, col=cl_alt)) + geom_point() + geom_smooth(method="lm")
+
+# # Visualisation
+# ggplot(deb_Psyl, aes(x=GDD0, y=julian_day)) + geom_point() + geom_smooth(method = "lm")
+# visreg(mod_deb_Psyl_Tmoy40j, "Tmoy30j")
+
+#*-------- 3) On complexifie le modèle ---- 
+# On teste en complexifiant le modèle :
+# - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
+# - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
+#   s'il y a aussi des effets précipitations par exemple)
+
+# mod_deb_Psyl_Tmoy40j_Alt <- lmer(julian_day ~ Tmoy40j + altitude + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F)
+# mod_deb_Psyl_Tmoy40j_year <- lmer(julian_day ~ Tmoy40j + year + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F)
+# mod_deb_Psyl_Tmoy40j_clAlt <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F)
+# mod_deb_Psyl_Tmoy30j_Alt_ <- lmer(julian_day ~ Tmoy30j + altitude + (1|ID_zone) + (Tmoy30j|yearQ), deb_Psyl, REML=F)
+# mod_deb_Psyl_Tmoy40j_Alt_ <- lmer(julian_day ~ Tmoy40j + altitude + (1|ID_zone) + (Tmoy40j|yearQ), deb_Psyl, REML=F)
+# mod_deb_Psyl_Tmoy40j_clAlt_ <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|ID_zone) + (Tmoy40j|yearQ), deb_Psyl, REML=F)
+# AIC(mod_deb_Psyl_Tmoy40j) ; AIC(mod_deb_Psyl_Tmoy40j_Alt) ; AIC(mod_deb_Psyl_Tmoy40j_year) ; AIC(mod_deb_Psyl_Tmoy40j_clAlt) ; AIC(mod_deb_Psyl_Tmoy30j_Alt_) ; AIC(mod_deb_Psyl_Tmoy40j_Alt_) ; AIC(mod_deb_Psyl_Tmoy40j_clAlt_)
+# # Mieux avec l'altitude en plus, et en ayant l'effet aléatoire 'année' sur la température 
+
+#========= MEILLEUR MODELE (en limitant le nombre de variables explicatives) :
+bestmod_deb_Psyl = lmer(julian_day ~ dChill + GDD5 + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F) # AIC = 327.8
+bestmods = c(list("Pin"=bestmod_deb_Psyl), bestmods)
+
+
+summary(bestmod_deb_Psyl)
+# effet du nombre de la proportion de jours de chilling (entre 0 et 8°C) : 8.6 jours d'avance pour 10% de jours de chilling en plus
+# effet de l'accumulation de chaleur (GDD5) : 0.1 jour d'avance quand on gagne 1°C
+
+# EVALUATION DU MODELE
+# - Effets fixes VS tous les effets inclus
+R2_models[R2_models$species == "Pin", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_deb_Psyl)
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_deb_Psyl)
+# - Validation croisée
+n = nrow(deb_Psyl)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- deb_Psyl[trainIndex ,]
+test <- deb_Psyl[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(deb_Psyl$ID_zone[drop=T])[!unique(deb_Psyl$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(bestmod_deb_Psyl), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+# # R2 ajusté = 0.7922845
+R2_models[R2_models$species == "Pin", "R2_bestmod_calibval"] = summary(lm(predictions~julian_day, test2))[["adj.r.squared"]]
+
+
+resultats = rbind(resultats, data.frame(species = "Pin",
+                                        periode = "2006-2024",
+                                        variable = rownames(coef(summary(bestmod_deb_Psyl))),
+                                        coef = coef(summary(bestmod_deb_Psyl))[,1],
+                                        std = coef(summary(bestmod_deb_Psyl))[,2],
+                                        pval = coef(summary(bestmod_deb_Psyl))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_deb_Psyl)[rownames(coef(summary(bestmod_deb_Psyl)))], error = function(e) return(NA))))
+
+
+##############################################-
+#*---- Sapin ----
+
+# /!\ Espèce ajoutée en 2018 !! 
+#     => Pas incluse dans l'étude de Bison et al. 2019
+#     => Ne pas l'inclure dans le calcul des indices
+
+# /!\ Il n'y a que 12 obs au total pour cette espèce !!! => pas de sens de caler des modèles avec 12 points seulement (on peut visualiser les tendances qd même)
+
+deb_Aalb = debourr_Alps[debourr_Alps$species == "Sapin",]
+deb_Aalb = deb_Aalb[!is.na(deb_Aalb$Tmoy30j),]
+ggplot(deb_Aalb, aes(x=altitude, y=julian_day)) + geom_point() + labs(title = "Débourrement 10% - Sapin", x="altitude",y="jour julien")
+ggplot(deb_Aalb, aes(x=Tmoy30j, y=julian_day)) + geom_point() + labs(title = "Débourrement 10% - Sapin", x="Tmoy30j",y="jour julien")
+ggplot(deb_Aalb, aes(x=Tmoyhiv, y=julian_day)) + geom_point() + labs(title = "Débourrement 10% - Sapin", x="Tmoyhiv",y="jour julien")
+
+
+##############################################-
+#*---- Bouleau pubescent ----
+
+deb_Bpub = debourr_Alps[debourr_Alps$species == "Bouleau_pubescent",]
+# ggplot(deb_Bpub, aes(x=year)) + geom_histogram(binwidth=1) 
+# # on voit qu'il y a peu de données en 2005, les retirer (parce qu'on n'a pas d'information de température) ne devrait pas changer grand-chose
+deb_Bpub = deb_Bpub[!is.na(deb_Bpub$Tmoy30j),]
+# ggplot(deb_Bpub, aes(x=julian_day)) + geom_histogram()
+# ggplot(deb_Bpub, aes(x=year, y=julian_day)) + geom_point() + geom_smooth(method=lm) + labs(title = "Débourrement 10% - Bouleau", x="année",y="jour julien")
+
+#*-------- 1) On reprend le modèle de Bison et al. 2019 ---- 
+mod_deb_Bpub_Alt <- lmer(julian_day ~ I(altitude-1100) + I(year-2014) + (I(year-2014)|ID_zone), deb_Bpub, REML=F)
+summary(mod_deb_Bpub_Alt)
+altyearmods = c(list("Bouleau_pubescent"=mod_deb_Bpub_Alt), altyearmods)
+
+# On note aussi le R2 de ce modèle, pour comparer avec les résultats des modèles avec température
+R2_models[R2_models$species == "Bouleau_pubescent", c("R2_altyear_fixef","R2_altyear_allef")] = r.squaredGLMM(mod_deb_Bpub_Alt)
+# + Validation croisée
+n = nrow(deb_Bpub)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- deb_Bpub[trainIndex ,]
+test <- deb_Bpub[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(deb_Bpub$ID_zone[drop=T])[!unique(deb_Bpub$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+mod_train <- lmer(formula(mod_deb_Bpub_Alt), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+# # R2 ajusté = 0.6222258
+R2_models[R2_models$species == "Bouleau_pubescent", "R2_altyear_calibval"] = summary(lm(predictions~julian_day, test2))[["adj.r.squared"]]
+
+
+#*-------- 2) On teste l'effet de différentes variables de température à la place des variables année et altitude ---- 
+# On garde tout de même l'effet année en effet aléatoire (cf autres param climatiques que la température)
+mod_deb_Bpub_Tmoy30j <- lmer(julian_day ~ Tmoy30j + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F)
+mod_deb_Bpub_Tmoy40j <- lmer(julian_day ~ Tmoy40j + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F)
+mod_deb_Bpub_Tmoy50j <- lmer(julian_day ~ Tmoy50j + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F)
+mod_deb_Bpub_gel30j <- lmer(julian_day ~ gel30j + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F)
+mod_deb_Bpub_gel40j <- lmer(julian_day ~ gel40j + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F)
+mod_deb_Bpub_gel50j <- lmer(julian_day ~ gel50j + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F)
+mod_deb_Bpub_GDD0 <- lmer(julian_day ~ GDD0 + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F)
+mod_deb_Bpub_GDD5 <- lmer(julian_day ~ GDD5 + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F)
+mod_deb_Bpub_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F)
+mod_deb_Bpub_dChill <- lmer(julian_day ~ dChill + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F)
+
+AIC(mod_deb_Bpub_Tmoy30j) ; AIC(mod_deb_Bpub_Tmoy40j) ; AIC(mod_deb_Bpub_Tmoy50j) ; AIC(mod_deb_Bpub_gel30j) ; AIC(mod_deb_Bpub_gel40j) ; AIC(mod_deb_Bpub_gel50j) ; AIC(mod_deb_Bpub_GDD0) ; AIC(mod_deb_Bpub_GDD5); AIC(mod_deb_Bpub_Tmoyhiv) ; AIC(mod_deb_Bpub_dChill)
+# La variable Tmoy40j donne les meilleurs résultats : c'est celle qu'on garde pour la suite
+
+# NB : on peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
+# /!\ ce qui serait le plus logique serait de ne garder que la meilleure des 5 variables de Tmoy et GDD (cf corrélations) et éventuellement Tmoyhiv et/ou dChill
+mod_deb_Bpub_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + gel30j + gel40j + gel50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F)
+# On enlève les variables une par une
+# En combinant ces 3 critères (AIC, significativité des effets, variables peu corrélées), on retient donc :
+mod_deb_Bpub_multiT = lmer(julian_day ~ Tmoy30j + gel30j + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F) # AIC = 637.8
+# On garde en tête ces multivariables de température pour la suite
+
+# ggplot(deb_Bpub, aes(x=year, y=Tmoy40j, col=cl_alt)) + geom_point() + geom_smooth(method="lm")
+
+# # Visualisation
+# ggplot(deb_Bpub, aes(x=GDD0, y=julian_day)) + geom_point() + geom_smooth(method = "lm")
+# visreg(mod_deb_Bpub_Tmoy40j, "Tmoy30j")
+
+#*-------- 3) On complexifie le modèle ---- 
+# On teste en complexifiant le modèle :
+# - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
+# - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
+#   s'il y a aussi des effets précipitations par exemple)
+# mod_deb_Bpub_Tmoy40j_Alt <- lmer(julian_day ~ Tmoy40j + altitude + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F)
+# mod_deb_Bpub_Tmoy40j_year <- lmer(julian_day ~ Tmoy40j + year + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F)
+# mod_deb_Bpub_Tmoy40j_clAlt <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F)
+# mod_deb_Bpub_Tmoy30j_Alt_ <- lmer(julian_day ~ Tmoy30j + altitude + (1|ID_zone) + (Tmoy30j|yearQ), deb_Bpub, REML=F)
+# mod_deb_Bpub_Tmoy40j_Alt_ <- lmer(julian_day ~ Tmoy40j + altitude + (1|ID_zone) + (Tmoy40j|yearQ), deb_Bpub, REML=F)
+# mod_deb_Bpub_Tmoy40j_clAlt_ <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|ID_zone) + (Tmoy40j|yearQ), deb_Bpub, REML=F)
+# AIC(mod_deb_Bpub_Tmoy40j) ; AIC(mod_deb_Bpub_Tmoy40j_Alt) ; AIC(mod_deb_Bpub_Tmoy40j_year) ; AIC(mod_deb_Bpub_Tmoy40j_clAlt) ; AIC(mod_deb_Bpub_Tmoy30j_Alt_) ; AIC(mod_deb_Bpub_Tmoy40j_Alt_) ; AIC(mod_deb_Bpub_Tmoy40j_clAlt_)
+# # Mieux avec l'altitude en plus, et en ayant l'effet aléatoire 'année' sur la température (AIC = 12453.3)
+
+#========= MEILLEUR MODELE :
+bestmod_deb_Bpub = lmer(julian_day ~ Tmoy30j + gel30j + altitude + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F) # AIC = 631.0
+bestmods = c(list("Bouleau_pubescent"=bestmod_deb_Bpub), bestmods)
+
+
+summary(bestmod_deb_Bpub)
+# gradient altitudinal : 2.3 jour de retard quand on monte de 100m
+# effet de la température moyenne dans les 30 jours précédant le débourrement : 4.4 jours d'avance quand on gagne 1°C
+# effet du gel dans les 30j précédant le débourrement : 1 jour d'avance quand il y a 1 jour de gel en plus
+
+# EVALUATION DU MODELE
+# - Effets fixes VS tous les effets inclus
+R2_models[R2_models$species == "Bouleau_pubescent", c("R2_bestmod_fixef","R2_bestmod_allef")] = r.squaredGLMM(bestmod_deb_Bpub)
+# - Part de variance expliquée par les différentes variables
+calcVarPart(bestmod_deb_Bpub)
+# - Validation croisée
+n = nrow(deb_Bpub)
+trainIndex <- sample(1:n, size = round(0.8*n), replace=FALSE)
+train <- deb_Bpub[trainIndex ,]
+test <- deb_Bpub[-trainIndex ,]
+test1 <- test[!test$ID_zone%in%(unique(deb_Bpub$ID_zone[drop=T])[!unique(deb_Bpub$ID_zone[drop=T])%in%unique(train$ID_zone[drop=T])]),]
+test1 <- test1[!test1$yearQ%in%(unique(deb_Bpub$yearQ[drop=T])[!unique(deb_Bpub$yearQ[drop=T])%in%unique(train$yearQ[drop=T])]),]
+mod_train <- lmer(formula(bestmod_deb_Bpub), train)
+predictions <- mod_train %>% predict(test1)
+test2 <- cbind(test1, predictions)
+# summary(lm(predictions~julian_day, test2))
+# # R2 ajusté = 0.6386649
+R2_models[R2_models$species == "Bouleau_pubescent", "R2_bestmod_calibval"] = summary(lm(predictions~julian_day, test2))[["adj.r.squared"]]
+
+
+resultats = rbind(resultats, data.frame(species = "Bouleau_pubescent",
+                                        periode = "2006-2024",
+                                        variable = rownames(coef(summary(bestmod_deb_Bpub))),
+                                        coef = coef(summary(bestmod_deb_Bpub))[,1],
+                                        std = coef(summary(bestmod_deb_Bpub))[,2],
+                                        pval = coef(summary(bestmod_deb_Bpub))[,5],
+                                        varexpli = tryCatch(calcVarPart(bestmod_deb_Bpub)[rownames(coef(summary(bestmod_deb_Bpub)))], error = function(e) return(NA))))
+
+
+
+
+
+
+
+
+#*---- Enregistrement des résultats ----
 
 write.csv(resultats[-1,], "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resultats_modeles_deb__coeff.csv", row.names = F)
 write.csv(R2_models[!is.na(R2_models$R2_bestmod_fixef),], "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resultats_modeles_deb__R2.csv", row.names = F)
 save(bestmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/bestmods_deb.Rdata")
+save(altyearmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/mods_deb_v1altyear.Rdata")
 
+
+
+#*---- Diagnostic / aperçu des résidus et diagnostic des effets aléatoires ----
+DIAG = data.frame(species = unique(debourr_Alps$species), 
+                  sd_res_altyear=NA, sd_pred_altyear=NA, sd_alea_ID_zone_altyear=NA, 
+                  sd_res_bestmod=NA, sd_pred_bestmod=NA, sd_alea_ID_zone_bestmod=NA, sd_alea_yearQ_bestmod=NA)
+for (esp in names(bestmods)){
+  DIAG[DIAG$species == esp,c("sd_res_bestmod","sd_pred_bestmod","sd_alea_ID_zone_bestmod","sd_alea_yearQ_bestmod")] = 
+    c(sd(bestmods[[esp]]@resp$wtres), sd(bestmods[[esp]]@resp$mu), attr(summary(bestmods[[esp]])$varcor$ID_zone,"stddev")[1], attr(summary(bestmods[[esp]])$varcor$yearQ,"stddev")[1])
+  DIAG[DIAG$species == esp,c("sd_res_altyear","sd_pred_altyear","sd_alea_ID_zone_altyear")] = 
+    c(sd(altyearmods[[esp]]@resp$wtres), sd(altyearmods[[esp]]@resp$mu), attr(summary(altyearmods[[esp]])$varcor$ID_zone,"stddev")[1], attr(summary(altyearmods[[esp]])$varcor$yearQ,"stddev")[1])
+
+}
 
 ############################################################################################-
 # INDICE PHÉNOCLIM BASÉ SUR CES MODÈLES                                                  ----
@@ -1493,10 +1939,11 @@ save(bestmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim
 
 # L'idée serait de calculer pour chaque année x espèce x dept x altitude (ou classe d'altitude) la date de débourrement, en fonction de la 
 # température moyenne mesurée une année donnée dans la classe d'altitude x dept.
-# Pour calculer ces variables de température, on se base sur les stations Phénoclim.
+# Pour calculer ces variables de température, on se base sur les reconstructions de température.
 
 Tperiodes = read.csv("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/meteo_reconstruc/varTprintemps_allphenosites.csv")
-phenoclim = read.csv("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/Phenoclim_data_cleaned.csv") 
+# phenoclim = read.csv("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/Phenoclim_data_cleaned.csv") 
+phenoclim = read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/05. RECHERCHE/06. ANALYSES/Phenoclim/data/_CLEANED_data_pheno.csv")
 
 Tperiodes = merge(Tperiodes, 
                   phenoclim[!duplicated(phenoclim$id_base_site),c("id_base_site","altitude","cl_alt","cl_alt2","cl_alt3",
@@ -1536,13 +1983,16 @@ T_pourpred$altitude = as.numeric(as.character(factor(T_pourpred$cl_alt,
 #         --------------------------------------------------------------------------------------
 
 indice_deb = T_pourpred %>% rename(Tmoy30j = Tmoy30j_med_0624,
-                                          Tmoy40j = Tmoy40j_med_0624,
-                                          Tmoy50j = Tmoy50j_med_0624,
-                                          GDD0 = GDD0_med_0624,
-                                           GDD5 = GDD5_med_0624,
-                                           Tmoyhiv = Tmoyhiv_med_0624,
-                                           dChill = dChill_med_0624,
-                                           year = annee)
+                                   Tmoy40j = Tmoy40j_med_0624,
+                                   Tmoy50j = Tmoy50j_med_0624,
+                                   gel30j = gel30j_med_0624,
+                                   gel40j = gel40j_med_0624,
+                                   gel50j = gel50j_med_0624,
+                                   GDD0 = GDD0_med_0624,
+                                   GDD5 = GDD5_med_0624,
+                                   Tmoyhiv = Tmoyhiv_med_0624,
+                                   dChill = dChill_med_0624,
+                                   year = annee)
 indice_deb$cl_alt = factor(indice_deb$cl_alt, levels=c("150-450","450-750" ,  "750-1050"   ,"1050-1350" , "1350-1650" ,"1650-1950", "1950-2250" ), 
                             ordered = T)
 indice_deb$yearQ = factor(indice_deb$year)
@@ -1550,16 +2000,16 @@ indice_deb$yearQ = factor(indice_deb$year)
 # Chargement des best models
 load("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/bestmods_deb.Rdata") 
 # Prédictions
-# RQ : on peut choisir de prédire en prenant en compte les effets aléatoires ou sans. Ici les effets aléatoires sont nom_zone (effet local, qu'on
+# RQ : on peut choisir de prédire en prenant en compte les effets aléatoires ou sans. Ici les effets aléatoires sont ID_zone (effet local, qu'on
 #      cherche à lisser en agrégeant par département) et yearQ (effet annuel lié aux spécificités climatiques non prises en compte dans le modèle,
-#      ce qu'on peut vouloir garder). Dans les prédictions V1, l'effet nom_zone n'est pas pris en compte, et l'effet year est pris en compte comme 
+#      ce qu'on peut vouloir garder). Dans les prédictions V1, l'effet ID_zone n'est pas pris en compte, et l'effet year est pris en compte comme 
 #      effet fixe dans le modèle. Dans la V2, on choisit de faire avec et sans l'effet aléatoire yearQ (en factor).
-for (esp in names(bestmods)){
+for (esp in c("Bouleau_verruqueux","Noisetier","Frene","Meleze","Epicea","Sorbier","Lilas")){#names(bestmods)){
     print(esp)
   if ("cl_alt" %in% colnames(bestmods[[esp]]@frame)){
     # Prédiction
-    indice_deb$pred_deb_fixef[indice_deb$cl_alt %in% unique(bestmods[[esp]]@frame$cl_alt)  & indice_deb$esp == esp] = predict(bestmods[[esp]], tab_pred, re.form=NA)
-    indice_deb$pred_deb_allef[indice_deb$cl_alt %in% unique(bestmods[[esp]]@frame$cl_alt)  & indice_deb$esp == esp] = predict(bestmods[[esp]], tab_pred, re.form=~(1|yearQ))
+    indice_deb$pred_deb_fixef[indice_deb$cl_alt %in% unique(bestmods[[esp]]@frame$cl_alt)  & indice_deb$esp == esp] = predict(bestmods[[esp]], indice_deb[indice_deb$cl_alt %in% unique(bestmods[[esp]]@frame$cl_alt)  & indice_deb$esp == esp,], re.form=NA)
+    indice_deb$pred_deb_allef[indice_deb$cl_alt %in% unique(bestmods[[esp]]@frame$cl_alt)  & indice_deb$esp == esp] = predict(bestmods[[esp]], indice_deb[indice_deb$cl_alt %in% unique(bestmods[[esp]]@frame$cl_alt)  & indice_deb$esp == esp,], re.form=~(1|yearQ))
   } else {
     # Prédiction
     indice_deb$pred_deb_fixef[indice_deb$esp == esp] = predict(bestmods[[esp]], indice_deb[indice_deb$esp == esp,], re.form=NA)
@@ -1572,6 +2022,9 @@ for (esp in names(bestmods)){
 
 indice_deb_dept = indice_deb %>% group_by(year, dept2, cl_alt, cl_alt2) %>% summarise(pred_deb_fixef = mean(pred_deb_fixef, na.rm=T),
                                                                                       pred_deb_allef = mean(pred_deb_allef, na.rm=T))
+
+write.csv(indice_deb_dept, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_dept.csv", row.names = F)
+
 
 # ggplot(indice_deb_dept, aes(y=year + 0.1*as.numeric(as.character(factor(cl_alt, levels=levels(cl_alt), labels=1:7))), 
 #                     x=pred_deb_fixef,
@@ -1620,10 +2073,201 @@ indice_deb_dept = indice_deb %>% group_by(year, dept2, cl_alt, cl_alt2) %>% summ
 
 
 ##############################################-
+#*----- Par espace protégé ----
+
+# L'idée serait de calculer pour chaque année x espèce x espprot x altitude (ou classe d'altitude) la date de débourrement, en fonction de la 
+# température moyenne mesurée une année donnée dans la classe d'altitude x espprot.
+# Pour calculer ces variables de température, on se base sur les reconstructions de température.
+
+Tperiodes = read.csv("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/meteo_reconstruc/varTprintemps_allphenosites.csv")
+# phenoclim = read.csv("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/Phenoclim_data_cleaned.csv") 
+phenoclim = read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/05. RECHERCHE/06. ANALYSES/Phenoclim/data/_CLEANED_data_pheno.csv")
+
+
+# Espaces protégés considérés : PN Vanoise, PN Écrins, RNs + Parcs italiens du Gran Paradisio (ID = 555580376) et Mont Avic (ID = 555528148) + Espace Mt Blanc
+# => data France : https://data.naturefrance.fr/geonetwork/srv/fre/catalog.search#/metadata/cc1bfe07-625e-4df6-86a2-49fd07d193d7
+RNNs = vect("data/_lim_admin/espaces_proteges/N_ENP_RNN_S_000.shp")
+RNRs = vect("data/_lim_admin/espaces_proteges/N_ENP_RNR_S_000.shp")
+PNs = vect("data/_lim_admin/espaces_proteges/N_ENP_PN_S_000.shp")
+PNRs = vect("data/_lim_admin/espaces_proteges/pnr_polygonPolygon.shp", opts="ENCODING=LATIN1")
+# => data Italie : UNEP-WCMC and IUCN (2025), Protected Planet: The World Database on Protected Areas (WDPA) and World Database on Other Effective Area-based Conservation Measures (WD-OECM) [Online], May 2025, Cambridge, UK: UNEP-WCMC and IUCN. Available at: www.protectedplanet.net. 
+ITprot = vect("data/_lim_admin/espaces_proteges/WDPA_WDOECM_May2025_Public_EU_shp_1/WDPA_WDOECM_May2025_Public_EU_shp-polygons.shp")
+ITprot = ITprot[ITprot$WDPAID == 555580376 | ITprot$WDPAID == 555528148,] # On sélectionne uniquement les 2 parcs qui nous intéressent
+# => Espace Mont Blanc : https://www.espace-mont-blanc.com/asset/img/carte_emb_dl.jpg
+EMB = vect("/Users/ninonfontaine/Google Drive/Drive partagés/05. RECHERCHE/05. DONNEES/Shapefiles/Perim_administratif/EMB/Perimetre_EMB_2017_poly.shp")
+
+espprot = phenoclim[,c("id_base_site","coord_x_2154","coord_y_2154")]
+espprot$espprot_RNN = extract(RNNs, vect(espprot, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$NOM_SITE
+espprot$espprot_RNR = extract(RNRs, vect(espprot, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$NOM_SITE
+espprot$espprot_PN = extract(PNs, vect(espprot, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$NOM_SITE
+espprot$espprot_PNR = extract(project(PNRs, "epsg:2154"), vect(espprot, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$name
+espprot$espprot_ITprot = extract(project(ITprot, "epsg:2154"), vect(espprot, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$NAME
+
+# On groupe tout en une seule variable, puisqu'en théorie il n'y a pas de recoupement RNR / RN / PN /ITprot
+# /!\ l'espace Mont-Blanc doit être considéré séparément !!
+phenoclim$espprot = apply(espprot[,grep("espprot", colnames(espprot))], 1, 
+                          function(x){ifelse(length(x[!is.na(x)])==0,NA,paste(c("RNN","RNR","PN","","")[!is.na(x)],x[!is.na(x)],sep=" "))})
+phenoclim$EMB = extract(project(EMB, "epsg:2154"), vect(phenoclim, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$EMB
+phenoclim$EMB[!is.na(phenoclim$EMB)] = "EMB"
+
+
+Tperiodes = merge(Tperiodes, 
+                  phenoclim[!duplicated(phenoclim$id_base_site),c("id_base_site","altitude","cl_alt","cl_alt2","cl_alt3",
+                                                                  "coord_x_2154", "coord_y_2154",
+                                                                  "dept1","region1","pays1","nom_massif","nom_massif_v2019","espprot","EMB")],
+                  by.x="sitePheno", by.y="id_base_site", all.x=T)
+
+
+
+# # Aperçu des zones (espace protégé x classe d'altitude) où on a des données
+# table(Tperiodes$espprot, Tperiodes$cl_alt)
+# table(phenoclim$espprot, phenoclim$year)
+# table(Tperiodes$espprot, Tperiodes$annee)
+
+##########################################################################################################################################-
+# /!\ il n'y a pas des données pour tous les espaces et toutes les années --> ajuster les prédictions !!!
+##########################################################################################################################################-
+
+
+
+T_pourpred = Tperiodes %>% group_by(espprot, annee, esp, cl_alt,
+                                    cl_alt2, cl_alt3, region1, pays1, nom_massif) %>% summarise(across(ends_with("0624"), mean))
+T_pourpred$altitude = as.numeric(as.character(factor(T_pourpred$cl_alt,
+                                                     levels = c("150-450", "450-750", "750-1050", "1050-1350", "1350-1650", "1650-1950", "1950-2250"),
+                                                     labels = c(300, 600, 900, 1200, 1500, 1800, 2100))))
+
+
+# On peut donc utiliser les modèles de chaque espèce pour faire les prédictions de débourrement
+#         --------------------------------------------------------------------------------------
+#           /!\ je n'ai pas fait de modèle pour le tussilage, la primevère et le pin sylvestre !! À voir s'ils sont dans l'indice calculé par Marjo & co
+#         --------------------------------------------------------------------------------------
+
+indice_deb = T_pourpred %>% rename(Tmoy30j = Tmoy30j_med_0624,
+                                   Tmoy40j = Tmoy40j_med_0624,
+                                   Tmoy50j = Tmoy50j_med_0624,
+                                   gel30j = gel30j_med_0624,
+                                   gel40j = gel40j_med_0624,
+                                   gel50j = gel50j_med_0624,
+                                   GDD0 = GDD0_med_0624,
+                                   GDD5 = GDD5_med_0624,
+                                   Tmoyhiv = Tmoyhiv_med_0624,
+                                   dChill = dChill_med_0624,
+                                   year = annee)
+indice_deb$cl_alt = factor(indice_deb$cl_alt, levels=c("150-450","450-750" ,  "750-1050"   ,"1050-1350" , "1350-1650" ,"1650-1950", "1950-2250" ), 
+                           ordered = T)
+indice_deb$yearQ = factor(indice_deb$year)
+
+# Chargement des best models
+load("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/bestmods_deb.Rdata") 
+# Prédictions
+# RQ : on peut choisir de prédire en prenant en compte les effets aléatoires ou sans. Ici les effets aléatoires sont ID_zone (effet local, qu'on
+#      cherche à lisser en agrégeant par département) et yearQ (effet annuel lié aux spécificités climatiques non prises en compte dans le modèle,
+#      ce qu'on peut vouloir garder). Dans les prédictions V1, l'effet ID_zone n'est pas pris en compte, et l'effet year est pris en compte comme 
+#      effet fixe dans le modèle. Dans la V2, on choisit de faire avec et sans l'effet aléatoire yearQ (en factor).
+for (esp in c("Bouleau_verruqueux","Noisetier","Frene","Meleze","Epicea","Sorbier","Lilas")){#names(bestmods)){
+  print(esp)
+  if ("cl_alt" %in% colnames(bestmods[[esp]]@frame)){ # On sépare le cas des classes d'altitude comme variable explicative (variable factorielle dont tous les niveaux ne sont pas nécessairement présents dans le tableau pour les prédictions)
+    # Prédiction
+    indice_deb$pred_deb_fixef[indice_deb$cl_alt %in% unique(bestmods[[esp]]@frame$cl_alt)  & indice_deb$esp == esp] = predict(bestmods[[esp]], indice_deb[indice_deb$cl_alt %in% unique(bestmods[[esp]]@frame$cl_alt)  & indice_deb$esp == esp,], re.form=NA)
+    indice_deb$pred_deb_allef[indice_deb$cl_alt %in% unique(bestmods[[esp]]@frame$cl_alt)  & indice_deb$esp == esp] = predict(bestmods[[esp]], indice_deb[indice_deb$cl_alt %in% unique(bestmods[[esp]]@frame$cl_alt)  & indice_deb$esp == esp,], re.form=~(1|yearQ))
+  } else {
+    # Prédiction
+    indice_deb$pred_deb_fixef[indice_deb$esp == esp] = predict(bestmods[[esp]], indice_deb[indice_deb$esp == esp,], re.form=NA)
+    indice_deb$pred_deb_allef[indice_deb$esp == esp] = predict(bestmods[[esp]], indice_deb[indice_deb$esp == esp,], re.form=~(1|yearQ))
+  }
+}
+
+
+
+
+indice_deb_espprot__all = indice_deb %>% group_by(year, espprot, cl_alt, cl_alt2) %>% summarise(pred_deb_fixef = mean(pred_deb_fixef, na.rm=T),
+                                                                                      pred_deb_allef = mean(pred_deb_allef, na.rm=T),
+                                                                                      nb_esp = length(unique(esp)))
+# # Si on veut sélectionner uniquement les prédictions où il y a des données d'observation (pour espèce x année x classe d'altitude) :
+# indice_deb_espprot__selecobs = indice_deb %>% filter(esp %in% phenoclim$species[phenoclim$espprot[phenoclim$cl_alt == cl_alt] == espprot]) %>% 
+#   group_by(year, espprot, cl_alt, cl_alt2) %>% 
+#   summarise(pred_deb_fixef = mean(pred_deb_fixef, na.rm=T),
+#             pred_deb_allef = mean(pred_deb_allef, na.rm=T),
+#             nb_esp = length(unique(esp[esp %in% phenoclim$species[phenoclim$espprot[phenoclim$cl_alt == cl_alt] == espprot]])))
+# ============================= /!\ À CORRIGER POUR QUE ÇA MARCHE !! ============================================================================================-
+
+write.csv(indice_deb_espprot__all, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_espprot__extra.csv", row.names = F)
+# write.csv(indice_deb_espprot__selecobs, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_espprot__ouobs.csv", row.names = F)
+
+
+#----- Visualisation des indices par espace protégé
+
+indice_deb_espprot$cl_2alt = ifelse(indice_deb_espprot$cl_alt2 == "<1050", "Inf1050", "Sup1050")
+
+indice_deb_espprot_V2 = indice_deb_espprot[!is.na(indice_deb_espprot$espprot),] %>% group_by(espprot,cl_2alt,year) %>% summarise(pred_deb_fixef = mean(pred_deb_fixef),
+                                                                                    pred_deb_allef = mean(pred_deb_allef))
+indice_deb_espprot_V2 = merge(indice_deb_espprot_V2,
+                           indice_deb_espprot %>% group_by(espprot,cl_2alt) %>% summarise(pred_deb_fixef_ref = mean(pred_deb_fixef),
+                                                                                     pred_deb_allef_ref = mean(pred_deb_allef)),
+                           by=c("espprot", "cl_2alt"))
+indice_deb_espprot_V2$diff_allef = indice_deb_espprot_V2$pred_deb_allef - indice_deb_espprot_V2$pred_deb_allef_ref
+indice_deb_espprot_V2$diff_fixef = indice_deb_espprot_V2$pred_deb_fixef - indice_deb_espprot_V2$pred_deb_fixef_ref
+
+plot_indice_espprot_fixef = ggplot(indice_deb_espprot_V2, 
+                              aes(y=year + 0.1*as.numeric(as.character(factor(cl_2alt, levels=unique(cl_2alt), labels=c(-1,1)))), 
+                                  x=diff_fixef, col=cl_2alt)) + 
+  geom_rect(aes(ymax = year + 0.5, ymin = year - 0.5, 
+                xmin = -Inf, xmax = Inf, color=NULL, 
+                fill = factor(ifelse(year %% 2 == 0, 1,0))), alpha = 0.8) + scale_fill_manual(values=c("gray90","white"))+
+  geom_vline(xintercept = 0, col="black", lty=2) +
+  geom_point(shape=15, size=2) + 
+  geom_segment(aes(x=diff_fixef, xend=+Inf, 
+                   y=year + 0.1*as.numeric(as.character(factor(cl_2alt, levels=unique(cl_2alt), labels=c(-1,1)))) , 
+                   yend=year + 0.1*as.numeric(as.character(factor(cl_2alt, levels=unique(cl_2alt), labels=c(-1,1)))),
+                   col=cl_2alt ), lty=3, lwd=0.7)+
+  scale_color_manual(values=c("darkgreen","yellowgreen"), breaks=c("Inf1050","Sup1050")) +
+  # scale_color_discrete(type=terrain.colors(7))+
+  scale_y_continuous(breaks=seq(2006,2024, by=1), labels=seq(2006,2024, by=1))+
+  # scale_x_continuous(breaks=seq(-12,12, by=2), labels=seq(-12,12, by=2)) + 
+  labs(x="", y="", title = "Indice de débourrement - V2 fixed effects")   + facet_wrap(~espprot) + #xlim(50,170)+
+  theme(legend.position = "none", 
+        panel.border = element_blank(),  
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.ticks = element_blank())
+plot_indice_espprot_allef = ggplot(indice_deb_espprot_V2, 
+                              aes(y=year + 0.1*as.numeric(as.character(factor(cl_2alt, levels=unique(cl_2alt), labels=c(-1,1)))), 
+                                  x=diff_allef, col=cl_2alt)) + 
+  geom_rect(aes(ymax = year + 0.5, ymin = year - 0.5, 
+                xmin = -Inf, xmax = Inf, color=NULL, 
+                fill = factor(ifelse(year %% 2 == 0, 1,0))), alpha = 0.8) + scale_fill_manual(values=c("gray90","white"))+
+  geom_vline(xintercept = 0, col="black", lty=2) +
+  geom_point(shape=15, size=2) + 
+  geom_segment(aes(x=diff_allef, xend=+Inf, 
+                   y=year + 0.1*as.numeric(as.character(factor(cl_2alt, levels=unique(cl_2alt), labels=c(-1,1)))) , 
+                   yend=year + 0.1*as.numeric(as.character(factor(cl_2alt, levels=unique(cl_2alt), labels=c(-1,1)))),
+                   col=cl_2alt ), lty=3, lwd=0.7)+
+  scale_color_manual(values=c("darkgreen","yellowgreen"), breaks=c("Inf1050","Sup1050")) +
+  # scale_color_discrete(type=terrain.colors(7))+
+  scale_y_continuous(breaks=seq(2006,2024, by=1), labels=seq(2006,2024, by=1))+
+  # scale_x_continuous(breaks=seq(-12,12, by=2), labels=seq(-12,12, by=2)) + 
+  labs(x="", y="", title = "Indice de débourrement - V2 all effects")   + facet_wrap(~espprot) + #xlim(50,170)+
+  theme(legend.position = "none", 
+        panel.border = element_blank(),  
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.ticks = element_blank())
+
+
+
+pdf("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_espprot.pdf", width=12, height = 10)
+plot_indice_espprot_fixef ; plot_indice_espprot_allef
+dev.off()
+
+
+
+
+
+##############################################-
 #*----- Comparaison de l'indice obtenu avec les indices précédemment calculés (selon le script de Marjorie et Colin) ----
 
-indice_deb_V1_dept = read.csv2("/Users/ninonfontaine/Google Drive/Drive partagés/prototool/Phenoclim/Analyse/Indice_phenoclim/pheno_year_deb6.csv", sep=",", dec=".")
-indice_deb_V1 = read.csv2("/Users/ninonfontaine/Google Drive/Drive partagés/prototool/Phenoclim/Analyse/Indice_phenoclim/pheno_year_global.csv", sep=",", dec=".", row.names=1)
+indice_deb_V1_dept = read.csv2("/Users/ninonfontaine/Google Drive/Drive partagés/05. RECHERCHE/06. ANALYSES/Phenoclim/Analyse/Indice_phenoclim/pheno_year_deb6.csv", sep=",", dec=".")
+indice_deb_V1 = read.csv2("/Users/ninonfontaine/Google Drive/Drive partagés/05. RECHERCHE/06. ANALYSES/Phenoclim/Analyse/Indice_phenoclim/pheno_year_global.csv", sep=",", dec=".", row.names=1)
 
 indice_deb$cl_2alt = ifelse(indice_deb$cl_alt2 == "<1050", "Inf1050", "Sup1050")
 indice_deb_dept$cl_2alt = ifelse(indice_deb_dept$cl_alt2 == "<1050", "Inf1050", "Sup1050")

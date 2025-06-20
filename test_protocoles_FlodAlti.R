@@ -99,7 +99,18 @@ ggmap(map_base) +
   geom_polygon(data=geom(MtAiguille), aes(x=x, y=y, group = part), col="red", fill=NA)
 
 
+# ----------------------------------------------------------------------------------------*
 
+# Un projet iNaturalist a été créé pour regrouper toutes les observations des 7 espèces d'intérêt (myrtille, airelle bleue, dryade à huit pétales, marguerite des 
+# Alpes, lis de St-Bruno, soldanelle, rhododendron ferrugineux) avec une information phénologique dans les zones où il peut y avoir une animation (Mont-Blanc,
+# Ecrins, Belledonne, Mont Aiguille). Les données récupérées via ce projet peuvent être téléchargées.
+
+projFA_iNat = read.csv("/Users/ninonfontaine/Desktop/projetsR/TEST/data/FlodAlti/iNat_projetFlodAlti__export.csv")
+paste("@", unique(projFA_iNat$user_login), sep="", collapse = " ")
+
+
+# ----------------------------------------------------------------------------------------*
+# ----------------------------------------------------------------------------------------*
 # ----------------------------------------------------------------------------------------*
 
 
@@ -243,7 +254,7 @@ data_iNat = rbind(get_inat_obs(taxon_name = "Vaccinium myrtillus",
 data_iNat[,c("x_l93","y_l93")] = crds(project(vect(data_iNat, geom=c("longitude","latitude"), "epsg:4326"),"epsg:2154"))
 
 
-data_landesCREA = RJSONIO::fromJSON("/Users/ninonfontaine/Google Drive/Drive partagés/SoPheno/10. Data/Relevé_végétation/releve_cleaned_301224.json")
+data_landesCREA = RJSONIO::fromJSON("/Users/ninonfontaine/Google Drive/Drive partagés/05. RECHERCHE/05. DONNEES/Floraison_altitude_et_myrtille/Relevé_végétation/releve_cleaned_301224.json")
 codes_esp = names(data_landesCREA$metadata_global$vegetation)
 data_landesCREA = as.data.frame(do.call("rbind", lapply(data_landesCREA$area, function(x){c(unlist(x$metadata[c("date","ref_project","elevation","latitude","longitude")]), unlist(x$PROTOCOL_PPFG_SUMMARY))})))
 colnames(data_landesCREA) = c("date","ref_project","elevation","latitude","longitude",
@@ -260,6 +271,61 @@ pts_myrtille = rbind(data_iNat[grep("myrtillus",data_iNat$scientific_name),c("x_
 pts_airelle = rbind(data_iNat[grep("uliginosum",data_iNat$scientific_name),c("x_l93","y_l93", "longitude", "latitude")],
                      data_CBNA[data_CBNA$cd_nom==128354, c("x_l93", "y_l93", "longitude", "latitude")],
                      data_landesCREA[data_landesCREA$LVU != 0, c("x_l93", "y_l93", "longitude", "latitude")])
+
+#*-------- PISTE : modèle de distribution de myrtille (à utiliser pour filtrer les sites potentiels) ----
+library(biomod2)
+
+# FORMATTING DATA
+myResp <- rep(1, nrow(pts_myrtille))
+myRespXY <- pts_myrtille[, c('x_l93', 'y_l93')]
+# Load environmental variables extracted from BIOCLIM (bio_3, bio_4, bio_7, bio_11 & bio_12) 
+# data(bioclim_current)
+# myExpl <- terra::rast(bioclim_current)
+myExpl = c(rast_topo, hab_ORION_l93)
+# Format Data with true absences
+myBiomodData <- BIOMOD_FormatingData(resp.var = as.vector(myResp),expl.var = myExpl,resp.xy = myRespXY,resp.name = "Myrtille",
+                                     PA.nb.rep = 4, PA.strategy = 'disk', PA.dist.min = 50, PA.dist.max = 5000, PA.nb.absences = 400)#, filter.raster = TRUE)
+# biomod2::plot(myBiomodData)
+myBiomodModelOut <- BIOMOD_Modeling(bm.format = myBiomodData,
+                                    modeling.id = 'AllModels',
+                                    models = c('RF', 'GLM'),
+                                    CV.strategy = 'random',
+                                    CV.nb.rep = 2,
+                                    CV.perc = 0.8,
+                                    OPT.strategy = 'bigboss',
+                                    metric.eval = c('TSS','ROC'),
+                                    var.import = 3,
+                                    seed.val = 42)
+myBiomodEM <- BIOMOD_EnsembleModeling(bm.mod = myBiomodModelOut,
+                                      models.chosen = 'all',
+                                      em.by = 'PA+run',
+                                      em.algo = c('EMmean', 'EMca'),
+                                      metric.select = c('TSS'),
+                                      metric.select.thresh = c(0.5),
+                                      metric.eval = c('TSS', 'ROC'),
+                                      var.import = 3,
+                                      seed.val = 42)
+# Project ensemble models (building single projections)
+myBiomodEMProj <- BIOMOD_EnsembleForecasting(bm.em = myBiomodEM,
+                                             proj.name = 'CurrentEM',
+                                             new.env = myExpl,
+                                             models.chosen = 'all',
+                                             metric.binary = 'all',
+                                             metric.filter = 'all')
+biomod2::plot(myBiomodEMProj)
+# models.proj <- get_built_models(myBiomodModelOut, algo = "RF")
+# Project single models
+myBiomodProj <- BIOMOD_Projection(bm.mod = myBiomodModelOut,
+                                  proj.name = 'CurrentRangeSize',
+                                  new.env = myExpl,
+                                  models.chosen = 'all',
+                                  metric.binary = 'all')
+biomod2::plot(myBiomodProj)
+
+
+test = rast("/Users/ninonfontaine/Desktop/projetsR/TEST/Myrtille/proj_CurrentEM/proj_CurrentEM_Myrtille_ensemble.tif")
+test1 = test[["Myrtille_EMmeanByTSS_PA1_RUN2_mergedAlgo"]]
+
 
 
 #*---- 0.5. Points pré-envisagés, pour l'écoacoustique notamment (ORCHAMP + Colin + CamTrap ?) ----
@@ -685,9 +751,12 @@ recap_sites = rbind(ech,
                     pts_pot_cond[,colnames(ech)])
 
 
-write.csv(recap_sites, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/FlodAlti/PlEchantillonnage_FruitsMyrt_RECAPtotal.csv" ,row.names = F)  
+write.csv(recap_sites, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/FlodAlti/PlEchantillonnage_FruitsMyrt_RECAPtotal.csv" ,row.names = F) 
 
-
+rownames(recap_sites) = recap_sites$Name
+recap_sites_vect = vect(recap_sites[,c("Name","altitude","x","y")], geom=c("x","y"), "epsg:2154")
+writeVector(recap_sites_vect, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/FlodAlti/PlEchantillonnage_FruitsMyrt.kml", overwrite=T)
+# writeVector(recap_sites_vect, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/FlodAlti/PlEchantillonnage_FruitsMyrt.gpx", filetype="GPX", overwrite=T)
 
 table(recap_sites$zone, recap_sites$selec, recap_sites$typo_Hab_x_Asp)
 
@@ -698,3 +767,13 @@ table(recap_sites$zone, recap_sites$selec, recap_sites$typo_Hab_x_Asp)
 #                    radius=8, 
 #                    color="black",opacity=1,fillOpacity = 1, weight=1)
 # carto_acoustique
+
+
+
+# TEST avec modele distribution myrtille
+recap_sites = read_xlsx("/Users/ninonfontaine/Google Drive/Drive partagés/05. RECHERCHE/05. DONNEES/Floraison_altitude_et_myrtille/Sites_spots.xlsx",sheet="recap_toutesselections") 
+recap_sites$modTEST = terra::extract(test1, recap_sites[,c("x","y")])[,2]
+
+write.csv(recap_sites, "/Users/ninonfontaine/Google Drive/Mon Drive/PlEchantillonnage_FruitsMyrt_RECAPtotalMOD.csv", row.names=F)
+
+

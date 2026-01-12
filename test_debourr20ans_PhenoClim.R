@@ -8,6 +8,7 @@ library(ggmap)
 library(ggplot2)
 library(tidyr)
 library(lubridate)
+library(stringr)
 library(data.table)
 library(reshape2)
 library(dplyr)
@@ -15,8 +16,10 @@ library(terra)
 library(lme4)
 library(lmerTest) # permet d'avoir les pvalues qui s'affichent pour les lmer
 library(visreg)
+library(sjPlot)
 library(MuMIn) # fonction r.squaredGLMM notamment
 library(variancePartition)
+library(gridExtra)
 
 
 ##############################################-
@@ -39,7 +42,7 @@ library(variancePartition)
 # Avec l'exploration des effets 'température', d'autres questions peuvent être posées : 
 #   (1) l'ajout d'une variable de température améliore-t-elle les modèles phénologiques ?
 #   (2) y a-t-il une tendance à l'avancement de la phénologie des arbres ?
-#   (3) cette tendance est-elle différente selon les périodes étudiées (2006-2016 vs 2006-2024 vs 2016-2024) ?
+#   (3) cette tendance est-elle différente selon les périodes étudiées (2006-2016 vs 2006-2025 vs 2016-2025) ?
 #   (4) les tendances dans les décalages phénologiques sont-elles différentes selon les altitudes considérées ?
 #   (5) les tendances sont-elles différentes selon les catégories d'observateur·rices (scolaires, professionnels, particuliers) ?
 
@@ -74,6 +77,25 @@ phenoclim = read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/05. REC
 
 stades = grep("Ok 10%",unique(phenoclim$pheno_etape_value), value = T)
 
+# Répartition des données entre années x classe d'altitude x espèces 
+dataheatmap = phenoclim %>% filter(nom_massif_v2019=="Alpes") %>% mutate(cl_alt = factor(cl_alt, levels=c("150-450","450-750","750-1050","1050-1350","1350-1650","1650-1950","1950-2250")))
+# [FOCUS Alpes et débourrement]
+ggplot(dataheatmap %>% filter(!is.na(cl_alt) & pheno_etape_value=="Debourrement - Ok 10%") %>% group_by(cl_alt,year,species) %>% summarise(nbdata=n(), DOY=mean(julian_day)), 
+       aes(x=year, y=cl_alt, fill=nbdata)) + #fill=DOY
+  geom_tile() + facet_wrap(~species, nrow=4) +
+  theme_bw()
+ggplot(dataheatmap %>% filter(!is.na(cl_alt) & pheno_etape_value=="Debourrement - Ok 10%") %>% group_by(year, cl_alt, species) %>% summarise(nbdata=n()), aes(x=year, y=nbdata, col=cl_alt)) + 
+  geom_line()  + facet_wrap(~species)
+
+# [FOCUS Alpes et changement de couleur]
+ggplot(dataheatmap %>% filter(!is.na(cl_alt) & pheno_etape_value=="Changement de couleur - Ok 10%") %>% group_by(cl_alt,year,species) %>% summarise(nbdata=n(), DOY=mean(julian_day)), 
+       aes(x=year, y=cl_alt, fill=nbdata)) + #fill=DOY
+  geom_tile() + facet_wrap(~species, nrow=4) +
+  theme_bw()
+ggplot(dataheatmap %>% filter(!is.na(cl_alt) & pheno_etape_value=="Changement de couleur - Ok 10%") %>% group_by(year, cl_alt, species) %>% summarise(nbdata=n()), aes(x=year, y=nbdata, col=cl_alt)) + 
+  geom_line()  + facet_wrap(~species)
+
+
 # En prenant toutes les données
 resume_stadeesp = phenoclim %>% filter(pheno_etape_value %in% stades) %>% group_by(species, year, pheno_stade_value, pheno_etape_value) %>%
   summarise(nb_obs = length(julian_day),
@@ -93,28 +115,29 @@ ggplot(resume_stadeesp, aes(x=julian_day, y=year, col=pheno_stade_value)) + geom
         panel.grid.minor = element_blank(),
         axis.ticks = element_blank())
 
-# Pour une zone en particulier
-zone_ENS = vect("/Users/ninonfontaine/Desktop/projetsR/TEST/data/_lim_admin/lim_zone_ENS_exemple/limite_ens.shp")
-zone_ENS_buffer5km = buffer(zone_ENS, 5000)
-phenoclim_ENS = phenoclim[!is.na(terra::extract(zone_ENS_buffer5km, vect(phenoclim, geom=c("coord_x_4326","coord_y_4326"), "epsg:4326"))$NOM.SITE),]
 
-resume_stadeesp = phenoclim_ENS %>% filter(pheno_etape_value %in% stades) %>% filter(pheno_etape_value %in% stades) %>% group_by(species, year, pheno_stade_value, pheno_etape_value) %>%
-  summarise(nb_obs = length(julian_day),
-            julian_day = mean(julian_day))
-resume_stadeesp$date_moyenne = as.Date(resume_stadeesp$julian_day, origin = paste0(resume_stadeesp$year,"-01-01"))
-write.csv(resume_stadeesp, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resume_datepheno_paresp_zoneENSGresivaudan.csv")
-
-ggplot(resume_stadeesp, aes(x=julian_day, y=year, col=pheno_stade_value)) + geom_point() + facet_wrap(~ species) + 
-  scale_color_manual(values = list("Débourrement" = "royalblue3", "Floraison" = "skyblue2", "Feuillaison" = "olivedrab3", "Changement couleur"="chocolate2")) +
-  scale_x_continuous(breaks= c(79,171,263), labels=c("mars","juin","sept.")) + 
-  labs(x="", y="")+
-  theme(legend.position = "none", 
-        panel.background = element_blank(),
-        panel.border = element_blank(),  
-        panel.grid.major.y = element_line(linewidth = 0.5, linetype = 'solid', colour = "grey"), 
-        panel.grid.major.x = element_blank(),
-        panel.grid.minor = element_blank(),
-        axis.ticks = element_blank())
+# # Pour une zone en particulier
+# zone_ENS = vect("/Users/ninonfontaine/Desktop/projetsR/TEST/data/_lim_admin/lim_zone_ENS_exemple/limite_ens.shp")
+# zone_ENS_buffer5km = buffer(zone_ENS, 5000)
+# phenoclim_ENS = phenoclim[!is.na(terra::extract(zone_ENS_buffer5km, vect(phenoclim, geom=c("coord_x_4326","coord_y_4326"), "epsg:4326"))$NOM.SITE),]
+# 
+# resume_stadeesp = phenoclim_ENS %>% filter(pheno_etape_value %in% stades) %>% filter(pheno_etape_value %in% stades) %>% group_by(species, year, pheno_stade_value, pheno_etape_value) %>%
+#   summarise(nb_obs = length(julian_day),
+#             julian_day = mean(julian_day))
+# resume_stadeesp$date_moyenne = as.Date(resume_stadeesp$julian_day, origin = paste0(resume_stadeesp$year,"-01-01"))
+# write.csv(resume_stadeesp, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resume_datepheno_paresp_zoneENSGresivaudan.csv")
+# 
+# ggplot(resume_stadeesp, aes(x=julian_day, y=year, col=pheno_stade_value)) + geom_point() + facet_wrap(~ species) + 
+#   scale_color_manual(values = list("Débourrement" = "royalblue3", "Floraison" = "skyblue2", "Feuillaison" = "olivedrab3", "Changement couleur"="chocolate2")) +
+#   scale_x_continuous(breaks= c(79,171,263), labels=c("mars","juin","sept.")) + 
+#   labs(x="", y="")+
+#   theme(legend.position = "none", 
+#         panel.background = element_blank(),
+#         panel.border = element_blank(),  
+#         panel.grid.major.y = element_line(linewidth = 0.5, linetype = 'solid', colour = "grey"), 
+#         panel.grid.major.x = element_blank(),
+#         panel.grid.minor = element_blank(),
+#         axis.ticks = element_blank())
 
 ############################################################################################-
 # INTÉGRATION DE VARIABLES EXPLICATIVES ASSOCIÉES AUX TEMPÉRATURES ----
@@ -391,16 +414,20 @@ ggplot(resume_stadeesp, aes(x=julian_day, y=year, col=pheno_stade_value)) + geom
 # VERSION 2 - ON CALCULE DES TEMPÉRATURES BASÉES SUR LA DATE *MÉDIANE* DE DÉBOURREMENT ET LA PÉRIODE PRÉCÉDENT CETTE MÉDIANE
 
 debourr_Alps = phenoclim[phenoclim$pheno_etape_value == "Debourrement - Ok 10%" &
-                           phenoclim$nom_massif == "Alpes",]
+                           phenoclim$nom_massif_v2019 == "Alpes",]
 # /!\ il y a beaucoup de lignes remplies de NA -> à supprimer :
 debourr_Alps = debourr_Alps[!is.na(debourr_Alps$ids_observers),]
 
 
-# 1) Calcul de la date de débourrement médiane par espèce, sur différentes périodes
+#*---------------- a) Calcul de la date de débourrement médiane par espèce, sur différentes périodes OU annuellement ----
+
 dates_deb_med = debourr_Alps %>% group_by(species) %>% 
   summarise(med_0616 = median(julian_day[year %in% 2006:2016], na.rm=T),
-            med_1624 = median(julian_day[year %in% 2016:2024], na.rm=T),
-            med_0624 = median(julian_day[year %in% 2006:2024], na.rm=T))
+            med_1625 = median(julian_day[year %in% 2016:2025], na.rm=T),
+            med_0625 = median(julian_day[year %in% 2006:2025], na.rm=T))
+
+dates_deb_med_ann = debourr_Alps %>% group_by(species, year) %>% 
+  summarise(med = median(julian_day, na.rm=T))
 
 # Tperiod_med__ <- function(site, esp, dates_medianes, tabT,
 #                     vartabT = c("julian_day","station_name","Tair_moy"),
@@ -470,9 +497,9 @@ dates_deb_med = debourr_Alps %>% group_by(species) %>%
 # }
 # 
 
-
+#*---------------- b) Calcul de variables thermiques sur différentes périodes définies à partir des dates médianes de débourrement ----
 # Construction d'un tableau sur le débourrement dans les Alpes, où chaque donnée (site x année) est associée à une valeur de température supposée
-# pertinente pour la phénologie : la température moyenne pendant les 30 jours précédant la date de débourrement.
+# pertinente pour la phénologie : la température moyenne pendant les 30 jours précédant la date médiane de débourrement.
 
 varTselec = c("Tmoy30j","Tmoy40j","Tmoy50j","gel30j","gel40j","gel50j","GDD0","GDD5","Tmoyhiv","dChill")
 output = data.frame(matrix(ncol=4+length(varTselec)))
@@ -481,7 +508,7 @@ colnames(output) = c("sitePheno",varTselec, "periode","esp","annee")
 
 vartabT = c("julian_day","station_name","Tair_moy", "Tair_min")
 
-for(annee in c(2006:2024)){#unique(debourr_Alps$year)){
+for(annee in c(2006:2025)){#unique(debourr_Alps$year)){
   print(annee)
   # reconstruc_Tday_sites = read.csv(paste0("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/meteo_reconstruc/",annee,"_Tairday_SitesPheno_reconstruit.csv"))
   # reconstruc_Tday_sites$julian_day = yday(as.Date(reconstruc_Tday_sites$date))
@@ -511,8 +538,10 @@ for(annee in c(2006:2024)){#unique(debourr_Alps$year)){
   #                                            tempcalc = varTselec)})
   for (esp in unique(debourr_Alps$species[debourr_Alps$year == annee])){
     jourscibles = dates_deb_med[dates_deb_med$species==esp,-1]
-    for (periode in colnames(jourscibles)){
-      jourcible = as.numeric(jourscibles[periode])
+    jourscibles_ann = dates_deb_med_ann[dates_deb_med_ann$species==esp & dates_deb_med_ann$year==annee,-1]
+    
+    for (periode in c(colnames(jourscibles),"ann")){
+      jourcible = ifelse(periode=="ann",as.numeric(jourscibles_ann$med),as.numeric(jourscibles[periode]))
       Tcalc = tabT %>% filter(jul_day <= jourcible & jul_day >= jourcible-30) %>% group_by(sitePheno) %>%
         summarise(Tmoy30j = mean(T, na.rm=T),
                   gel30j = length(Tmin[Tmin<0]))
@@ -549,7 +578,7 @@ for(annee in c(2006:2024)){#unique(debourr_Alps$year)){
 output = output[!is.na(output$sitePheno),]
 Tperiodes = data.table::dcast(data=setDT(output), formula=sitePheno+esp+annee ~ periode, value.var=varTselec)
 
-# ggplot(Tperiodes, aes(y=Tmoy30j_med_0624, x=annee, col=sitePheno)) + geom_point() + geom_smooth(method='lm')
+# ggplot(Tperiodes, aes(y=Tmoy30j_med_0625, x=annee, col=sitePheno)) + geom_point() + geom_smooth(method='lm')
 
 write.csv(Tperiodes, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/meteo_reconstruc/varTprintemps_allphenosites.csv")
 
@@ -569,17 +598,11 @@ debourr_Alps$yearQ = factor(debourr_Alps$year)
 debourr_Alps$cl_alt = factor(debourr_Alps$cl_alt, levels=c("150-450","450-750" ,  "750-1050"   ,"1050-1350" , "1350-1650" ,"1650-1950", "1950-2250" ), 
                              ordered = T)
 
-# On renomme les variables de température calculées sur la date médiane de débourrement de la période 2006-2024 ('par défaut')
-debourr_Alps = debourr_Alps %>% rename(Tmoy30j = Tmoy30j_med_0624,
-                                       Tmoy40j = Tmoy40j_med_0624,
-                                       Tmoy50j = Tmoy50j_med_0624,
-                                       gel30j = gel30j_med_0624,
-                                       gel40j = gel40j_med_0624,
-                                       gel50j = gel50j_med_0624,
-                                       GDD0 = GDD0_med_0624,
-                                       GDD5 = GDD5_med_0624,
-                                       Tmoyhiv = Tmoyhiv_med_0624,
-                                       dChill = dChill_med_0624)
+# On renomme les variables de température calculées sur la date médiane de débourrement de la période 2006-2025 ('par défaut')
+#*  ====================== CHOISIR LA VERSION AVEC LES MÉDIANES DE DÉBOURREMENT ANNUELLES OU PAR PERIODES ======================
+debourr_Alps = debourr_Alps %>% rename_with(~str_replace(.,"_ann",""))
+# debourr_Alps = debourr_Alps %>% rename_with(~str_replace(.,"_0625",""))
+#  ==================================================================================================================================== 
 
 # Remarque : au vu des corrélations entre ces variables de température, il est peu logique d'en intégrer plusieurs si elles sont trop corrélées
 varTselec = c("Tmoy30j","Tmoy40j","Tmoy50j","gel30j","gel40j","gel50j","GDD0","GDD5","Tmoyhiv","dChill")
@@ -664,7 +687,7 @@ mod_deb_Bpen_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + gel30j + g
 # On enlève les variables une par une : dChill puis Tmoy30j puis Tmoyhiv --> c'est le modèle avec le meilleur AIC... MAIS GDD5 n'a pas un effet 
 # significatif au seuil 0.05... et les variables de température Tmoy+GDD sont super corrélées ! 
 # En combinant ces 3 critères (AIC, significativité des effets, variables peu corrélées), on retient donc :
-mod_deb_Bpen_multiT = lmer(julian_day ~ Tmoy40j + gel50j + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F) # AIC = 12583.2
+mod_deb_Bpen_multiT = lmer(julian_day ~ Tmoy40j + gel50j + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F) # AIC = 13368.55
 # On garde en tête ces multivariables de température pour la suite
 
 # ggplot(deb_Bpen, aes(x=year, y=Tmoy40j, col=cl_alt)) + geom_point() + geom_smooth(method="lm")
@@ -683,18 +706,19 @@ mod_deb_Bpen_Tmoy40j_year <- lmer(julian_day ~ Tmoy40j + year + (1|ID_zone) + (1
 mod_deb_Bpen_Tmoy40j_clAlt <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|ID_zone) + (1|yearQ), deb_Bpen, REML=F)
 mod_deb_Bpen_Tmoy30j_Alt_ <- lmer(julian_day ~ Tmoy30j + altitude + (1|ID_zone) + (Tmoy30j|yearQ), deb_Bpen, REML=F)
 mod_deb_Bpen_Tmoy40j_Alt_ <- lmer(julian_day ~ Tmoy40j + altitude + (1|ID_zone) + (Tmoy40j|yearQ), deb_Bpen, REML=F)
+mod_deb_Bpen_Tmoy50j_Alt_ <- lmer(julian_day ~ Tmoy50j + altitude + (1|ID_zone) + (Tmoy50j|yearQ), deb_Bpen, REML=F)
 mod_deb_Bpen_Tmoy40j_clAlt_ <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|ID_zone) + (Tmoy40j|yearQ), deb_Bpen, REML=F)
-AIC(mod_deb_Bpen_Tmoy40j) ; AIC(mod_deb_Bpen_Tmoy40j_Alt) ; AIC(mod_deb_Bpen_Tmoy40j_year) ; AIC(mod_deb_Bpen_Tmoy40j_clAlt) ; AIC(mod_deb_Bpen_Tmoy30j_Alt_) ; AIC(mod_deb_Bpen_Tmoy40j_Alt_) ; AIC(mod_deb_Bpen_Tmoy40j_clAlt_)
-# Mieux avec l'altitude en plus, et en ayant l'effet aléatoire 'année' sur la température (AIC = 12453.3)
+AIC(mod_deb_Bpen_Tmoy40j) ; AIC(mod_deb_Bpen_Tmoy40j_Alt) ; AIC(mod_deb_Bpen_Tmoy40j_year) ; AIC(mod_deb_Bpen_Tmoy40j_clAlt) ; AIC(mod_deb_Bpen_Tmoy30j_Alt_) ; AIC(mod_deb_Bpen_Tmoy40j_Alt_) ;AIC(mod_deb_Bpen_Tmoy50j_Alt_) ; AIC(mod_deb_Bpen_Tmoy40j_clAlt_)
+# Mieux avec l'altitude en plus, et en ayant l'effet aléatoire 'année' sur la température (AIC = 13219.1)
 
 #========= MEILLEUR MODELE :
-bestmod_deb_Bpen = lmer(julian_day ~ Tmoy30j + altitude + (1|ID_zone) + (Tmoy30j|yearQ), deb_Bpen, REML=F) # AIC = 12453.3
+bestmod_deb_Bpen = lmer(julian_day ~ Tmoy40j + altitude + (1|ID_zone) + (Tmoy40j|yearQ), deb_Bpen, REML=F) # AIC = 13219.1
 bestmods = c(list("Bouleau_verruqueux"=bestmod_deb_Bpen), bestmods)
 
 
 summary(bestmod_deb_Bpen)
-# gradient altitudinal : 1.8 jour de retard quand on monte de 100m
-# effet de la température moyenne dans les 30 jours précédant le débourrement : 1.4 jour d'avance quand on gagne 1°C
+# gradient altitudinal : 2.1 jour de retard quand on monte de 100m
+# effet de la température moyenne dans les 30 jours précédant le débourrement : 0.8 jour d'avance quand on gagne 1°C
 
 # EVALUATION DU MODELE
 # - Effets fixes VS tous les effets inclus
@@ -716,7 +740,7 @@ R2_models[R2_models$species == "Bouleau_verruqueux", "R2_bestmod_calibval"] = su
 
 
 resultats = rbind(resultats, data.frame(species = "Bouleau_verruqueux",
-                                        periode = "2006-2024",
+                                        periode = "2006-2025",
                                         variable = rownames(coef(summary(bestmod_deb_Bpen))),
                                         coef = coef(summary(bestmod_deb_Bpen))[,1],
                                         std = coef(summary(bestmod_deb_Bpen))[,2],
@@ -726,7 +750,10 @@ resultats = rbind(resultats, data.frame(species = "Bouleau_verruqueux",
 
 # En utilisant ce même modèle mais pour la période 2006-2016 (cf article Bison et al), on obtient :
 deb_Bpen_10ans = deb_Bpen[deb_Bpen$year <= 2016,]
-bestmod_deb_Bpen_10ans <- lmer(julian_day ~ Tmoy30j_med_0616 + altitude + (1|ID_zone) + (Tmoy30j_med_0616|yearQ), deb_Bpen_10ans, REML=F)
+#*  ====================== CHOISIR LA VERSION AVEC LES MÉDIANES DE DÉBOURREMENT ANNUELLES OU PAR PERIODES ======================
+# bestmod_deb_Bpen_10ans <- lmer(julian_day ~ Tmoy30j_med_0616 + altitude + (1|ID_zone) + (Tmoy30j_med_0616|yearQ), deb_Bpen_10ans, REML=F)
+bestmod_deb_Bpen_10ans <- lmer(julian_day ~ Tmoy40j + altitude + (1|ID_zone) + (Tmoy40j|yearQ), deb_Bpen_10ans, REML=F)
+#  ==================================================================================================================================== 
 summary(bestmod_deb_Bpen_10ans)
 # On a les mêmes tendances sur les deux périodes (même en prenant la température calculée avec la médiane des débourrements 2006-2016)
 
@@ -789,13 +816,13 @@ mod_deb_Cave_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|ID_zone) + (1|yearQ), deb
 mod_deb_Cave_dChill <- lmer(julian_day ~ dChill + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F)
 
 AIC(mod_deb_Cave_Tmoy30j) ; AIC(mod_deb_Cave_Tmoy40j) ; AIC(mod_deb_Cave_Tmoy50j) ;AIC(mod_deb_Cave_gel30j) ; AIC(mod_deb_Cave_gel40j) ; AIC(mod_deb_Cave_gel50j) ; AIC(mod_deb_Cave_GDD0) ; AIC(mod_deb_Cave_GDD5); AIC(mod_deb_Cave_Tmoyhiv) ; AIC(mod_deb_Cave_dChill)
-# La variable Tmoy50j donne les meilleurs résultats : c'est celle qu'on garde pour la suite
+# La variable Tmoy40j donne les meilleurs résultats : c'est celle qu'on garde pour la suite
 
 # NB : on peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
 mod_deb_Cave_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + gel30j + gel40j + gel50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F)
 # On enlève les variables une par une : Tmoy30j puis dChill puis Tmoyhiv puis Tmoy50j--> c'est le modèle avec le meilleur AIC... MAIS les variables
 # restantes sont quand même fortement corrélées...!
-mod_deb_Cave_multiT = lmer(julian_day ~ Tmoy40j + GDD5 + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F) # AIC = 12845.5
+mod_deb_Cave_multiT = lmer(julian_day ~ Tmoy40j + GDD5 + (1|ID_zone) + (1|yearQ), deb_Cave, REML=F) # AIC = 13483.92
 # On garde en tête ces multivariables de température pour la suite
 
 # ggplot(deb_Cave, aes(x=year, y=Tmoy40j, col=cl_alt)) + geom_point() + geom_smooth(method="lm")
@@ -817,15 +844,15 @@ mod_deb_Cave_Tmoy40j_Alt_ <- lmer(julian_day ~ Tmoy40j + altitude + (1|ID_zone) 
 mod_deb_Cave_Tmoy40jGDD5_Alt_ <- lmer(julian_day ~ Tmoy40j + GDD5 + altitude + (1|ID_zone) + (Tmoy40j|yearQ), deb_Cave, REML=F)
 mod_deb_Cave_Tmoy40j_clAlt_ <- lmer(julian_day ~ Tmoy40j * cl_alt + (1|ID_zone) + (Tmoy40j|yearQ), deb_Cave, REML=F)
 AIC(mod_deb_Cave_Tmoy40j) ; AIC(mod_deb_Cave_Tmoy40j_Alt) ; AIC(mod_deb_Cave_Tmoy40j_year) ; AIC(mod_deb_Cave_Tmoy40j_clAlt) ; AIC(mod_deb_Cave_Tmoy40j_Alt_) ; AIC(mod_deb_Cave_Tmoy40jGDD5_Alt_) ; AIC(mod_deb_Cave_Tmoy40j_clAlt_)
-# Mieux avec l'altitude en plus, en ayant une combinaison GDD5 + Tmoy40j, et en ayant l'effet aléatoire 'année' sur la température (AIC = 12798.2)
+# Mieux avec l'altitude en plus, en ayant une combinaison GDD5 + Tmoy40j, et en ayant l'effet aléatoire 'année' sur la température (AIC = 13424.73)
 
 #========= MEILLEUR MODELE :
-bestmod_deb_Cave = lmer(julian_day ~ Tmoy40j + GDD5 + altitude + (1|ID_zone) + (Tmoy40j|yearQ), deb_Cave, REML=F) # AIC = 12798.2
+bestmod_deb_Cave = lmer(julian_day ~ Tmoy50j + GDD5 + altitude + (1|ID_zone) + (Tmoy50j|yearQ), deb_Cave, REML=F) # AIC = 12798.2
 bestmods = c(list("Noisetier"=bestmod_deb_Cave), bestmods)
 
 summary(bestmod_deb_Cave)
-# gradient altitudinal : 1.9 jour de retard quand on monte de 100m
-# effet de la température moyenne dans les 40 jours précédant le débourrement : 3.5 jours d'avance quand on gagne 1°C
+# gradient altitudinal : 2.1 jour de retard quand on monte de 100m
+# effet de la température moyenne dans les 40 jours précédant le débourrement : 2.8 jours d'avance quand on gagne 1°C
 
 # EVALUATION DU MODELE
 # - Effets fixes VS tous les effets inclus
@@ -847,7 +874,7 @@ R2_models[R2_models$species == "Noisetier", "R2_bestmod_calibval"] = summary(lm(
 
 
 resultats = rbind(resultats, data.frame(species = "Noisetier",
-                                        periode = "2006-2024",
+                                        periode = "2006-2025",
                                         variable = rownames(coef(summary(bestmod_deb_Cave))),
                                         coef = coef(summary(bestmod_deb_Cave))[,1],
                                         std = coef(summary(bestmod_deb_Cave))[,2],
@@ -857,7 +884,10 @@ resultats = rbind(resultats, data.frame(species = "Noisetier",
 
 # En utilisant ce même modèle mais pour la période 2006-2016 (cf article Bison et al), on obtient :
 deb_Cave_10ans = deb_Cave[deb_Cave$year <= 2016,]
-bestmod_deb_Cave_10ans <- lmer(julian_day ~ Tmoy40j_med_0616 + GDD5_med_0616 + altitude + (1|ID_zone) + (Tmoy40j_med_0616|yearQ), deb_Cave_10ans, REML=F)
+#*  ====================== CHOISIR LA VERSION AVEC LES MÉDIANES DE DÉBOURREMENT ANNUELLES OU PAR PERIODES ======================
+# bestmod_deb_Cave_10ans <- lmer(julian_day ~ Tmoy40j_med_0616 + GDD5_med_0616 + altitude + (1|ID_zone) + (Tmoy40j_med_0616|yearQ), deb_Cave_10ans, REML=F)
+bestmod_deb_Cave_10ans <- lmer(julian_day ~ Tmoy50j + GDD5 + altitude + (1|ID_zone) + (Tmoy50j|yearQ), deb_Cave_10ans, REML=F)
+#  ==================================================================================================================================== 
 summary(bestmod_deb_Cave_10ans)
 # On a les mêmes tendances sur les deux périodes (même en prenant la température calculée avec la médiane des débourrements 2006-2016)
 
@@ -919,13 +949,13 @@ mod_deb_Fexc_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|ID_zone) + (1|yearQ), deb
 mod_deb_Fexc_dChill <- lmer(julian_day ~ dChill + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F)
 
 AIC(mod_deb_Fexc_Tmoy30j) ; AIC(mod_deb_Fexc_Tmoy40j) ; AIC(mod_deb_Fexc_Tmoy50j) ; AIC(mod_deb_Fexc_gel30j) ; AIC(mod_deb_Fexc_gel40j) ; AIC(mod_deb_Fexc_gel50j) ; AIC(mod_deb_Fexc_GDD0) ; AIC(mod_deb_Fexc_GDD5); AIC(mod_deb_Fexc_Tmoyhiv) ; AIC(mod_deb_Fexc_dChill)
-# La variable Tmoy30j donne les meilleurs résultats : c'est celle qu'on garde pour la suite
+# La variable GDD0 donne les meilleurs résultats : c'est celle qu'on garde pour la suite
 
 # NB : on peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
 mod_deb_Fexc_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + gel30j + gel40j + gel50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F)
 # On enlève les variables une par une : Tmoy30j puis dChill puis Tmoyhiv puis Tmoy50j--> c'est le modèle avec le meilleur AIC... MAIS les variables
 # restantes sont quand même fortement corrélées...!
-mod_deb_Fexc_multiT = lmer(julian_day ~ Tmoy30j + GDD0 + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F) # AIC = 13924.1
+mod_deb_Fexc_multiT = lmer(julian_day ~ gel30j + GDD0 + (1|ID_zone) + (1|yearQ), deb_Fexc, REML=F) # AIC = 13924.1
 # On garde en tête ces multivariables de température pour la suite
 
 # ggplot(deb_Fexc, aes(x=year, y=Tmoy30j, col=cl_alt)) + geom_point() + geom_smooth(method="lm")
@@ -950,11 +980,12 @@ AIC(mod_deb_Fexc_Tmoy30j) ; AIC(mod_deb_Fexc_Tmoy30j_Alt) ; AIC(mod_deb_Fexc_Tmo
 
 
 #========= MEILLEUR MODELE :
-bestmod_deb_Fexc = lmer(julian_day ~ GDD0 + Tmoy30j + altitude + (1|ID_zone) + (Tmoy30j|yearQ), deb_Fexc, REML=F) # AIC = 13761.28
+# bestmod_deb_Fexc = lmer(julian_day ~ GDD0 + Tmoy30j + altitude + (1|ID_zone) + (Tmoy30j|yearQ), deb_Fexc, REML=F) # AIC = 13761.28  # bestmod 2006-2024, med sur cette période
+bestmod_deb_Fexc = lmer(julian_day ~ GDD0 + Tmoy30j + (1|ID_zone) + (Tmoy30j|yearQ), deb_Fexc, REML=F) # AIC = 14404.7
 bestmods = c(list("Frene"=bestmod_deb_Fexc), bestmods)
 
 summary(bestmod_deb_Fexc)
-# gradient altitudinal : 3.3 jours de retard quand on monte de 100m
+# gradient altitudinal : BAZAR si on le garde !
 # effet de la température moyenne dans les 30 jours précédant le débourrement : 0.5 jours d'avance quand on gagne 1°C MAIS non significatif (pval = 0.49)
 
 # EVALUATION DU MODELE
@@ -977,7 +1008,7 @@ R2_models[R2_models$species == "Frene", "R2_bestmod_calibval"] = summary(lm(pred
 
 
 resultats = rbind(resultats, data.frame(species = "Frene",
-                                        periode = "2006-2024",
+                                        periode = "2006-2025",
                                         variable = rownames(coef(summary(bestmod_deb_Fexc))),
                                         coef = coef(summary(bestmod_deb_Fexc))[,1],
                                         std = coef(summary(bestmod_deb_Fexc))[,2],
@@ -987,7 +1018,11 @@ resultats = rbind(resultats, data.frame(species = "Frene",
 
 # En utilisant ce même modèle mais pour la période 2006-2016 (cf article Bison et al), on obtient :
 deb_Fexc_10ans = deb_Fexc[deb_Fexc$year <= 2016,]
-bestmod_deb_Fexc_10ans <- lmer(julian_day ~ Tmoy30j_med_0616 + GDD0_med_0616 + altitude + (1|ID_zone) + (Tmoy30j_med_0616|yearQ), deb_Fexc_10ans, REML=F)
+#*  ====================== CHOISIR LA VERSION AVEC LES MÉDIANES DE DÉBOURREMENT ANNUELLES OU PAR PERIODES ======================
+# bestmod_deb_Fexc_10ans <- lmer(julian_day ~ Tmoy30j_med_0616 + GDD0_med_0616 + altitude + (1|ID_zone) + (Tmoy30j_med_0616|yearQ), deb_Fexc_10ans, REML=F)
+# bestmod_deb_Fexc_10ans <- lmer(julian_day ~ Tmoy30j_med_0616 + GDD0_med_0616 + (1|ID_zone) + (1|yearQ), deb_Fexc_10ans, REML=F)
+bestmod_deb_Fexc_10ans <- lmer(julian_day ~ Tmoy30j + GDD0 + (1|ID_zone) + (Tmoy30j|yearQ), deb_Fexc_10ans, REML=F)
+#  ==================================================================================================================================== 
 summary(bestmod_deb_Fexc_10ans)
 # On a les mêmes tendances sur les deux périodes (même en prenant la température calculée avec la médiane des débourrements 2006-2016)
 
@@ -1056,7 +1091,7 @@ AIC(mod_deb_Ldec_Tmoy30j) ; AIC(mod_deb_Ldec_Tmoy40j) ; AIC(mod_deb_Ldec_Tmoy50j
 # NB : on peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
 mod_deb_Ldec_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + gel30j + gel40j + gel50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F)
 # On enlève les variables une par une : Tmoy40j reste le meilleur modèle
-mod_deb_Ldec_multiT = lmer(julian_day ~ Tmoy40j + gel30j + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F) # AIC = 13370.29
+mod_deb_Ldec_multiT = lmer(julian_day ~ Tmoy40j + gel40j + (1|ID_zone) + (1|yearQ), deb_Ldec, REML=F) # AIC = 14186.5
 
 # ggplot(deb_Ldec, aes(x=year, y=Tmoy40j, col=cl_alt)) + geom_point() + geom_smooth(method="lm")
 
@@ -1079,11 +1114,11 @@ AIC(mod_deb_Ldec_Tmoy40j) ; AIC(mod_deb_Ldec_Tmoy40j_Alt) ; AIC(mod_deb_Ldec_Tmo
 
 
 #========= MEILLEUR MODELE :
-bestmod_deb_Ldec = lmer(julian_day ~ Tmoy40j * gel30j + altitude + (1|ID_zone) + (Tmoy40j|yearQ), deb_Ldec, REML=F) # AIC = 13271.05
+bestmod_deb_Ldec = lmer(julian_day ~ Tmoy50j * gel50j + altitude + (1|ID_zone) + (Tmoy50j|yearQ), deb_Ldec, REML=F) # AIC = 14037.94
 bestmods = c(list("Meleze"=bestmod_deb_Ldec), bestmods)
 
 summary(bestmod_deb_Ldec)
-visreg(bestmod_deb_Ldec, "Tmoy40j", by="gel30j")
+visreg(bestmod_deb_Ldec, "Tmoy50j", by="gel50j")
 # gradient altitudinal : 2.3 jours de retard par 100m
 # effet de la température moyenne dans les 40 jours précédant le débourrement : 1.6 jour d'avance quand on gagne 1°C MAIS effet moins fort s'il y a des jours de gel
 
@@ -1107,7 +1142,7 @@ R2_models[R2_models$species == "Meleze", "R2_bestmod_calibval"] = summary(lm(pre
 
 
 resultats = rbind(resultats, data.frame(species = "Meleze",
-                                        periode = "2006-2024",
+                                        periode = "2006-2025",
                                         variable = rownames(coef(summary(bestmod_deb_Ldec))),
                                         coef = coef(summary(bestmod_deb_Ldec))[,1],
                                         std = coef(summary(bestmod_deb_Ldec))[,2],
@@ -1117,7 +1152,10 @@ resultats = rbind(resultats, data.frame(species = "Meleze",
 
 # En utilisant ce même modèle mais pour la période 2006-2016 (cf article Bison et al), on obtient :
 deb_Ldec_10ans = deb_Ldec[deb_Ldec$year <= 2016,]
-bestmod_deb_Ldec_10ans <- lmer(julian_day ~ Tmoy40j_med_0616 * gel30j_med_0616 + altitude + (1|ID_zone) + (Tmoy40j_med_0616|yearQ),  deb_Ldec_10ans, REML=F)
+#*  ====================== CHOISIR LA VERSION AVEC LES MÉDIANES DE DÉBOURREMENT ANNUELLES OU PAR PERIODES ======================
+# bestmod_deb_Ldec_10ans <- lmer(julian_day ~ Tmoy40j_med_0616 * gel30j_med_0616 + altitude + (1|ID_zone) + (Tmoy40j_med_0616|yearQ),  deb_Ldec_10ans, REML=F)
+bestmod_deb_Ldec_10ans <- lmer(julian_day ~ Tmoy50j * gel50j + altitude + (1|ID_zone) + (Tmoy50j|yearQ),  deb_Ldec_10ans, REML=F)
+#  ==================================================================================================================================== 
 summary(bestmod_deb_Ldec_10ans)
 # On a les mêmes tendances sur les deux périodes 
 
@@ -1179,13 +1217,13 @@ mod_deb_Pabi_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|ID_zone) + (1|yearQ), deb
 mod_deb_Pabi_dChill <- lmer(julian_day ~ dChill + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
 
 AIC(mod_deb_Pabi_Tmoy30j) ; AIC(mod_deb_Pabi_Tmoy40j) ; AIC(mod_deb_Pabi_Tmoy50j) ; AIC(mod_deb_Pabi_gel30j) ; AIC(mod_deb_Pabi_gel40j) ; AIC(mod_deb_Pabi_gel50j) ; AIC(mod_deb_Pabi_GDD0) ; AIC(mod_deb_Pabi_GDD5); AIC(mod_deb_Pabi_Tmoyhiv) ; AIC(mod_deb_Pabi_dChill)
-# La variable Tmoy50j donne les meilleurs résultats : c'est celle qu'on garde pour la suite
+# La variable Tmoy50j (ou GDD0) donne les meilleurs résultats : c'est celle qu'on garde pour la suite
 # /!\ Quand on ajoute d'autres variables, notamment l'altitude, Tmoyhiv devient meilleure !! ======================================== /!\ /!\ /!\
 
 # NB : on peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
 mod_deb_Pabi_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + gel30j + gel40j + gel50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F)
 # On enlève les variables une par une.. jusqu'à avoir le meilleur AIC
-mod_deb_Pabi_multiT = lmer(julian_day ~ Tmoy50j + gel30j + GDD5 + Tmoyhiv + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F) # AIC = 10217.52
+mod_deb_Pabi_multiT = lmer(julian_day ~ Tmoy50j + Tmoyhiv + (1|ID_zone) + (1|yearQ), deb_Pabi, REML=F) # AIC = 10747.6
 # On garde en tête ces multivariables de température pour la suite
 
 # ggplot(deb_Pabi, aes(x=year, y=GDD0, col=cl_alt)) + geom_point() + geom_smooth(method="lm")
@@ -1224,10 +1262,11 @@ AIC(mod_deb_Pabi_Tmoy50j) ; AIC(mod_deb_Pabi_Tmoy50j_Alt) ; AIC(mod_deb_Pabi_Tmo
 
 #========= MEILLEUR MODELE :
 bestmod_deb_Pabi = lmer(julian_day ~ Tmoy30j * altitude + (1|ID_zone) + (Tmoy30j|yearQ), deb_Pabi, REML=F) # AIC = 10189.21
+# bestmod_deb_Pabi = lmer(julian_day ~ gel50j + Tmoyhiv + (1|ID_zone) + (Tmoyhiv|yearQ), deb_Pabi, REML=F)
 bestmods = c(list("Epicea"=bestmod_deb_Pabi), bestmods)
 
 summary(bestmod_deb_Pabi)
-visreg(bestmod_deb_Pabi, "Tmoy30j", by="altitude")
+# visreg(bestmod_deb_Pabi, "Tmoyhiv", by="altitude")
 
 
 # EVALUATION DU MODELE
@@ -1250,7 +1289,7 @@ R2_models[R2_models$species == "Epicea", "R2_bestmod_calibval"] = summary(lm(pre
 
 
 resultats = rbind(resultats, data.frame(species = "Epicea",
-                                        periode = "2006-2024",
+                                        periode = "2006-2025",
                                         variable = rownames(coef(summary(bestmod_deb_Pabi))),
                                         coef = coef(summary(bestmod_deb_Pabi))[,1],
                                         std = coef(summary(bestmod_deb_Pabi))[,2],
@@ -1260,7 +1299,11 @@ resultats = rbind(resultats, data.frame(species = "Epicea",
 
 # En utilisant ce même modèle mais pour la période 2006-2016 (cf article Bison et al), on obtient :
 deb_Pabi_10ans = deb_Pabi[deb_Pabi$year <= 2016,]
-bestmod_deb_Pabi_10ans <- lmer(julian_day ~ Tmoy30j_med_0616 * altitude + (1|ID_zone) + (Tmoy30j_med_0616|yearQ), deb_Pabi_10ans, REML=F)
+#*  ====================== CHOISIR LA VERSION AVEC LES MÉDIANES DE DÉBOURREMENT ANNUELLES OU PAR PERIODES ======================
+# bestmod_deb_Pabi_10ans <- lmer(julian_day ~ Tmoy30j_med_0616 * altitude + (1|ID_zone) + (Tmoy30j_med_0616|yearQ), deb_Pabi_10ans, REML=F)
+bestmod_deb_Pabi_10ans <- lmer(julian_day ~ Tmoy30j * altitude + (1|ID_zone) + (Tmoy30j|yearQ), deb_Pabi_10ans, REML=F)
+# bestmod_deb_Pabi_10ans = lmer(julian_day ~ gel50j + Tmoyhiv + (1|ID_zone) + (Tmoyhiv|yearQ), deb_Pabi_10ans, REML=F)
+#  ==================================================================================================================================== 
 summary(bestmod_deb_Pabi_10ans)
 # On a les mêmes tendances sur les deux périodes (même en prenant la température calculée avec la médiane des débourrements 2006-2016)
 
@@ -1324,13 +1367,13 @@ mod_deb_Sacu_Tmoyhiv <- lmer(julian_day ~ Tmoyhiv + (1|ID_zone) + (1|yearQ), deb
 mod_deb_Sacu_dChill <- lmer(julian_day ~ dChill + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
 
 AIC(mod_deb_Sacu_Tmoy30j) ; AIC(mod_deb_Sacu_Tmoy40j) ; AIC(mod_deb_Sacu_Tmoy50j) ; AIC(mod_deb_Sacu_gel30j) ; AIC(mod_deb_Sacu_gel40j) ; AIC(mod_deb_Sacu_gel50j) ; AIC(mod_deb_Sacu_GDD0) ; AIC(mod_deb_Sacu_GDD5); AIC(mod_deb_Sacu_Tmoyhiv) ; AIC(mod_deb_Sacu_dChill)
-# Les variables Tmoy40j et GDD0 donnent les meilleurs résultats 
+# Les variables GDD5 donnent les meilleurs résultats 
 
 # NB : on peut aussi tester d'intégrer plusieurs variables différentes, et faire un choix backward/forward
 mod_deb_Sacu_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + gel30j + gel40j + gel50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
 # On enlève les variables une par une : Il reste 4 variables dans le modèle avec le meilleur AIC... MAIS les variables restantes sont quand même 
 # fortement corrélées, et pas toutes significatives, donc on en retire encore 2
-mod_deb_Sacu_multiT = lmer(julian_day ~ Tmoy40j + gel50j + dChill + GDD0 + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F) # AIC = 5728.5
+mod_deb_Sacu_multiT = lmer(julian_day ~ GDD5 + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F) # AIC = 5728.5
 # On garde en tête ces multivariables de température pour la suite
 
 # ggplot(deb_Sacu, aes(x=year, y=Tmoy30j, col=cl_alt)) + geom_point() + geom_smooth(method="lm")
@@ -1344,17 +1387,18 @@ mod_deb_Sacu_multiT = lmer(julian_day ~ Tmoy40j + gel50j + dChill + GDD0 + (1|ID
 # - en ajoutant un effet altitude, en interaction avec la température (ex. adaptation au fait qu'il y a plus de risque de gel tardif ?) 
 # - en regardant l'interaction température / année pour l'effet aléatoire (en considérant que l'effet température ne sera pas le même tous les ans
 #   s'il y a aussi des effets précipitations par exemple)
-mod_deb_Sacu_GDD0_Alt <- lmer(julian_day ~ GDD0 + altitude + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
-mod_deb_Sacu_GDD0dChill_Alt <- lmer(julian_day ~ GDD0 + dChill + altitude + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
-mod_deb_Sacu_GDD0_year <- lmer(julian_day ~ GDD0 + altitude + year + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
-mod_deb_Sacu_GDD0_clAlt <- lmer(julian_day ~ GDD0 * cl_alt + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
-mod_deb_Sacu_GDD0_Alt_ <- lmer(julian_day ~ GDD0 + altitude + (1|ID_zone) + (GDD0|yearQ), deb_Sacu, REML=F)
-mod_deb_Sacu_GDD0_clAlt_ <- lmer(julian_day ~ GDD0 * cl_alt + (1|ID_zone) + (GDD0|yearQ), deb_Sacu, REML=F)
-AIC(mod_deb_Sacu_GDD0) ; AIC(mod_deb_Sacu_GDD0_Alt) ; AIC(mod_deb_Sacu_GDD0dChill_Alt) ; AIC(mod_deb_Sacu_GDD0_year) ; AIC(mod_deb_Sacu_GDD0_clAlt) ; AIC(mod_deb_Sacu_GDD0_Alt_) ; AIC(mod_deb_Sacu_GDD0_clAlt_)
+mod_deb_Sacu_GDD5_Alt <- lmer(julian_day ~ GDD5 + altitude + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_GDD5dChill_Alt <- lmer(julian_day ~ GDD5 + dChill + altitude + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_GDD5_year <- lmer(julian_day ~ GDD5 + altitude + year + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_GDD5_clAlt <- lmer(julian_day ~ GDD5 * cl_alt + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_GDD5_Alt_ <- lmer(julian_day ~ GDD5 + altitude + (1|ID_zone) + (GDD5|yearQ), deb_Sacu, REML=F)
+mod_deb_Sacu_GDD5_clAlt_ <- lmer(julian_day ~ GDD5 * cl_alt + (1|ID_zone) + (GDD5|yearQ), deb_Sacu, REML=F)
+AIC(mod_deb_Sacu_GDD5) ; AIC(mod_deb_Sacu_GDD5_Alt) ; AIC(mod_deb_Sacu_GDD5dChill_Alt) ; AIC(mod_deb_Sacu_GDD5_year) ; AIC(mod_deb_Sacu_GDD5_clAlt) ; AIC(mod_deb_Sacu_GDD5_Alt_) ; AIC(mod_deb_Sacu_GDD5_clAlt_)
 # Mieux avec l'altitude en plus (AIC = 5701.37)
 
 #========= MEILLEUR MODELE :
-bestmod_deb_Sacu = lmer(julian_day ~ GDD0 + dChill + altitude + (1|ID_zone) + (dChill|yearQ), deb_Sacu, REML=F) # AIC = 5712.1
+bestmod_deb_Sacu = lmer(julian_day ~ GDD0 + dChill + altitude + (1|ID_zone) + (dChill|yearQ), deb_Sacu, REML=F) # AIC = 5712.1 # bestmod 2006-2024, med sur cette période
+# bestmod_deb_Sacu = lmer(julian_day ~ GDD5 + altitude + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F) # AIC = 6060.3
 bestmods = c(list("Sorbier"=bestmod_deb_Sacu), bestmods)
 
 summary(bestmod_deb_Sacu)
@@ -1381,7 +1425,7 @@ R2_models[R2_models$species == "Sorbier", "R2_bestmod_calibval"] = summary(lm(pr
 
 
 resultats = rbind(resultats, data.frame(species = "Sorbier",
-                                        periode = "2006-2024",
+                                        periode = "2006-2025",
                                         variable = rownames(coef(summary(bestmod_deb_Sacu))),
                                         coef = coef(summary(bestmod_deb_Sacu))[,1],
                                         std = coef(summary(bestmod_deb_Sacu))[,2],
@@ -1391,7 +1435,12 @@ resultats = rbind(resultats, data.frame(species = "Sorbier",
 
 # En utilisant ce même modèle mais pour la période 2006-2016 (cf article Bison et al), on obtient :
 deb_Sacu_10ans = deb_Sacu[deb_Sacu$year <= 2016,]
-bestmod_deb_Sacu_10ans <- lmer(julian_day ~ GDD0_med_0616 + dChill_med_0616 + altitude + (1|ID_zone) + (dChill_med_0616|yearQ), deb_Sacu_10ans, REML=F)
+#*  ====================== CHOISIR LA VERSION AVEC LES MÉDIANES DE DÉBOURREMENT ANNUELLES OU PAR PERIODES ======================
+# bestmod_deb_Sacu_10ans <- lmer(julian_day ~ GDD0_med_0616 + dChill_med_0616 + altitude + (1|ID_zone) + (dChill_med_0616|yearQ), deb_Sacu_10ans, REML=F)
+bestmod_deb_Sacu_10ans <- lmer(julian_day ~ GDD0 + dChill + altitude + (1|ID_zone) + (dChill|yearQ), deb_Sacu_10ans, REML=F)
+# bestmod_deb_Sacu_10ans = lmer(julian_day ~ GDD5_med_0616 + altitude + (1|ID_zone) + (GDD5_med_0616|yearQ), deb_Sacu, REML=F) # AIC = 6060.3
+# bestmod_deb_Sacu_10ans = lmer(julian_day ~ GDD5 + altitude + (1|ID_zone) + (1|yearQ), deb_Sacu, REML=F) # AIC = 6060.3
+#  ==================================================================================================================================== 
 summary(bestmod_deb_Sacu_10ans)
 # On a les mêmes tendances sur les deux périodes mais le gradient altitudinale est plus faible
 
@@ -1458,7 +1507,7 @@ AIC(mod_deb_Svul_Tmoy30j) ; AIC(mod_deb_Svul_Tmoy40j) ; AIC(mod_deb_Svul_Tmoy50j
 mod_deb_Svul_multiT = lmer(julian_day ~ Tmoy30j + Tmoy40j + Tmoy50j + gel30j + gel40j + gel50j + GDD0 + GDD5 + Tmoyhiv + dChill + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F)
 # On enlève les variables une par une : Tmoy30j puis dChill puis Tmoyhiv puis Tmoy50j--> c'est le modèle avec le meilleur AIC... MAIS les variables
 # restantes sont quand même fortement corrélées...!
-mod_deb_Svul_multiT = lmer(julian_day ~ Tmoy30j + gel30j + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F) # AIC = 4273.4
+mod_deb_Svul_multiT = lmer(julian_day ~ Tmoy30j + gel40j + (1|ID_zone) + (1|yearQ), deb_Svul, REML=F) # AIC = 4273.4
 # On garde en tête ces multivariables de température pour la suite
 
 # ggplot(deb_Svul, aes(x=year, y=Tmoy30j, col=cl_alt)) + geom_point() + geom_smooth(method="lm")
@@ -1487,7 +1536,7 @@ bestmod_deb_Svul = lmer(julian_day ~ altitude + gel30j + (1|ID_zone) + (gel30j|y
 bestmods = c(list("Lilas"=bestmod_deb_Svul), bestmods)
 
 summary(bestmod_deb_Svul)
-visreg(bestmod_deb_Svul, "gel30j", by="altitude")
+# visreg(bestmod_deb_Svul, "gel30j", by="altitude")
 # gradient altitudinal : 2.0 jours de retard quand on monte de 100m
 # effet du nombre de jours de gel 30 j avant la date médiane de débourrement : 0.5 jours de retard par jour de gel
 
@@ -1511,7 +1560,7 @@ R2_models[R2_models$species == "Lilas", "R2_bestmod_calibval"] = summary(lm(pred
 
 
 resultats = rbind(resultats, data.frame(species = "Lilas",
-                                        periode = "2006-2024",
+                                        periode = "2006-2025",
                                         variable = rownames(coef(summary(bestmod_deb_Svul))),
                                         coef = coef(summary(bestmod_deb_Svul))[,1],
                                         std = coef(summary(bestmod_deb_Svul))[,2],
@@ -1521,7 +1570,10 @@ resultats = rbind(resultats, data.frame(species = "Lilas",
 
 # En utilisant ce même modèle mais pour la période 2006-2016 (cf article Bison et al), on obtient :
 deb_Svul_10ans = deb_Svul[deb_Svul$year <= 2016,]
-bestmod_deb_Svul_10ans <- lmer(julian_day ~ altitude + gel30j_med_0616+ (1|ID_zone) + (gel30j_med_0616|yearQ), deb_Svul_10ans, REML=F)
+#*  ====================== CHOISIR LA VERSION AVEC LES MÉDIANES DE DÉBOURREMENT ANNUELLES OU PAR PERIODES ======================
+# bestmod_deb_Svul_10ans <- lmer(julian_day ~ altitude + gel30j_med_0616+ (1|ID_zone) + (gel30j_med_0616|yearQ), deb_Svul_10ans, REML=F)
+bestmod_deb_Svul_10ans <- lmer(julian_day ~ altitude + gel30j+ (1|ID_zone) + (gel30j|yearQ), deb_Svul_10ans, REML=F)
+#  ==================================================================================================================================== 
 summary(bestmod_deb_Svul_10ans)
 # On a les mêmes tendances sur les deux périodes mais le gradient de température est un peu plus faible
 
@@ -1620,7 +1672,8 @@ mod_deb_Fsyl_multiT = lmer(julian_day ~ Tmoy50j + gel40j +GDD5 + Tmoyhiv + (1|ID
 # # Mieux avec l'altitude en plus, et en ayant l'effet aléatoire 'année' sur la température 
 
 #========= MEILLEUR MODELE (en limitant le nombre de variables explicatives) :
-bestmod_deb_Fsyl = lmer(julian_day ~ Tmoyhiv + Tmoy30j + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F) # AIC = 545.3
+# bestmod_deb_Fsyl = lmer(julian_day ~ Tmoyhiv + Tmoy30j + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F) # AIC = 545.3  # bestmod 2006-2024, med sur cette période
+bestmod_deb_Fsyl = lmer(julian_day ~ Tmoyhiv  + (1|ID_zone) + (1|yearQ), deb_Fsyl, REML=F) # AIC = 545.3
 bestmods = c(list("Hetre"=bestmod_deb_Fsyl), bestmods)
 
 
@@ -1648,7 +1701,7 @@ R2_models[R2_models$species == "Hetre", "R2_bestmod_calibval"] = summary(lm(pred
 
 
 resultats = rbind(resultats, data.frame(species = "Hetre",
-                                        periode = "2006-2024",
+                                        periode = "2006-2025",
                                         variable = rownames(coef(summary(bestmod_deb_Fsyl))),
                                         coef = coef(summary(bestmod_deb_Fsyl))[,1],
                                         std = coef(summary(bestmod_deb_Fsyl))[,2],
@@ -1737,7 +1790,8 @@ mod_deb_Psyl_multiT = lmer(julian_day ~ dChill + (1|ID_zone) + (1|yearQ), deb_Ps
 # # Mieux avec l'altitude en plus, et en ayant l'effet aléatoire 'année' sur la température 
 
 #========= MEILLEUR MODELE (en limitant le nombre de variables explicatives) :
-bestmod_deb_Psyl = lmer(julian_day ~ dChill + GDD5 + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F) # AIC = 327.8
+# bestmod_deb_Psyl = lmer(julian_day ~ dChill + GDD5 + (1|ID_zone) + (1|yearQ), deb_Psyl, REML=F) # AIC = 327.8  # bestmod 2006-2024, med sur cette période
+bestmod_deb_Psyl = lmer(julian_day ~ dChill + (1|ID_zone) + (dChill|yearQ), deb_Psyl, REML=F) # AIC = 327.8
 bestmods = c(list("Pin"=bestmod_deb_Psyl), bestmods)
 
 
@@ -1765,7 +1819,7 @@ R2_models[R2_models$species == "Pin", "R2_bestmod_calibval"] = summary(lm(predic
 
 
 resultats = rbind(resultats, data.frame(species = "Pin",
-                                        periode = "2006-2024",
+                                        periode = "2006-2025",
                                         variable = rownames(coef(summary(bestmod_deb_Psyl))),
                                         coef = coef(summary(bestmod_deb_Psyl))[,1],
                                         std = coef(summary(bestmod_deb_Psyl))[,2],
@@ -1865,7 +1919,8 @@ mod_deb_Bpub_multiT = lmer(julian_day ~ Tmoy30j + gel30j + (1|ID_zone) + (1|year
 # # Mieux avec l'altitude en plus, et en ayant l'effet aléatoire 'année' sur la température (AIC = 12453.3)
 
 #========= MEILLEUR MODELE :
-bestmod_deb_Bpub = lmer(julian_day ~ Tmoy30j + gel30j + altitude + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F) # AIC = 631.0
+# bestmod_deb_Bpub = lmer(julian_day ~ Tmoy30j + gel30j + altitude + (1|ID_zone) + (1|yearQ), deb_Bpub, REML=F) # AIC = 631.0  # bestmod 2006-2024, med sur cette période
+bestmod_deb_Bpub = lmer(julian_day ~ gel30j + altitude + (1|ID_zone) + (gel30j|yearQ), deb_Bpub, REML=F) # AIC = 631.0
 bestmods = c(list("Bouleau_pubescent"=bestmod_deb_Bpub), bestmods)
 
 
@@ -1895,7 +1950,7 @@ R2_models[R2_models$species == "Bouleau_pubescent", "R2_bestmod_calibval"] = sum
 
 
 resultats = rbind(resultats, data.frame(species = "Bouleau_pubescent",
-                                        periode = "2006-2024",
+                                        periode = "2006-2025",
                                         variable = rownames(coef(summary(bestmod_deb_Bpub))),
                                         coef = coef(summary(bestmod_deb_Bpub))[,1],
                                         std = coef(summary(bestmod_deb_Bpub))[,2],
@@ -1911,12 +1966,21 @@ resultats = rbind(resultats, data.frame(species = "Bouleau_pubescent",
 
 #*---- Enregistrement des résultats ----
 
-write.csv(resultats[-1,], "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resultats_modeles_deb__coeff.csv", row.names = F)
-write.csv(R2_models[!is.na(R2_models$R2_bestmod_fixef),], "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resultats_modeles_deb__R2.csv", row.names = F)
-save(bestmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/bestmods_deb.Rdata")
-save(altyearmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/mods_deb_v1altyear.Rdata")
+# write.csv(resultats[-1,], "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resultats_modeles_deb__coeff.csv", row.names = F)
+# write.csv(R2_models[!is.na(R2_models$R2_bestmod_fixef),], "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resultats_modeles_deb__R2.csv", row.names = F)
+# save(bestmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/bestmods_deb.Rdata")
+# save(altyearmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/mods_deb_v1altyear.Rdata")
 
-
+#*  ====================== CHOISIR LA VERSION AVEC LES MÉDIANES DE DÉBOURREMENT ANNUELLES OU PAR PERIODES ======================
+write.csv(resultats[-1,], "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resultats_modeles_deb__coeff___20062025_varTmedann.csv", row.names = F)
+write.csv(R2_models[!is.na(R2_models$R2_bestmod_fixef),], "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resultats_modeles_deb__R2___20062025_varTmedann.csv", row.names = F)
+save(bestmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/bestmods_deb___20062025_varTmedann.Rdata")
+save(altyearmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/mods_deb_v1altyear___20062025_varTmedann.Rdata")
+# write.csv(resultats[-1,], "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resultats_modeles_deb__coeff___20062025_varTmed0625.csv", row.names = F)
+# write.csv(R2_models[!is.na(R2_models$R2_bestmod_fixef),], "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resultats_modeles_deb__R2___20062025_varTmed0625.csv", row.names = F)
+# save(bestmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/bestmods_deb___20062025_varTmed0625.Rdata")
+# save(altyearmods, file="/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/mods_deb_v1altyear___20062025_varTmed0625.Rdata")
+#  ==================================================================================================================================== 
 
 #*---- Diagnostic / aperçu des résidus et diagnostic des effets aléatoires ----
 DIAG = data.frame(species = unique(debourr_Alps$species), 
@@ -1929,6 +1993,34 @@ for (esp in names(bestmods)){
     c(sd(altyearmods[[esp]]@resp$wtres), sd(altyearmods[[esp]]@resp$mu), attr(summary(altyearmods[[esp]])$varcor$ID_zone,"stddev")[1], attr(summary(altyearmods[[esp]])$varcor$yearQ,"stddev")[1])
 
 }
+
+
+#*---- Aperçu des effets aléatoires "année" ----
+
+# Pour avoir le retard ou la précocité résiduelle pour chaque espèce :
+
+recap_year = data.frame(annee = NULL, espece=NULL, randeff = NULL)
+for (esp in names(bestmods)){
+  # plot_model(bestmods[[esp]], type="re")[[2]]
+  recap_year = rbind(recap_year, data.frame(annee=rownames(ranef(bestmods[[esp]])$yearQ),
+                                            espece=esp,
+                                            randeff=ranef(bestmods[[esp]])$yearQ$`(Intercept)`))
+}
+ggplot(recap_year, aes(x=randeff, y=annee, col=randeff>0)) + geom_point() + facet_wrap(~espece) + scale_color_manual(values=list("FALSE"="firebrick3","TRUE"="dodgerblue3")) + xlim(c(-20,20))
+
+recap_year = data.frame(espece=NULL, estimate = NULL, conf.low=NULL,  conf.high=NULL, term=NULL, group=NULL)
+for (esp in names(bestmods)){
+  recap_year = rbind(recap_year, 
+                     (plot_model(bestmods[[esp]], type="re")[[2]]$data %>% filter(facet=="yearQ (Intercept)") %>% mutate(espece=esp))[,c("espece","estimate","conf.low","conf.high","term","group")]
+  )
+}
+ggplot(recap_year %>% mutate(term=as.numeric(as.character(term))), aes(x=estimate, y=term, col=group)) + geom_point() + geom_segment(aes(x=conf.low,xend=conf.high,y=term,yend=term, col=group))+
+  facet_wrap(~espece) + scale_color_manual(values=list("neg"="firebrick3","pos"="dodgerblue3")) + xlim(c(-30,30)) + theme(legend.position = "none")
+ggplot(recap_year %>% mutate(term=as.numeric(as.character(term)))%>% filter(espece %in% c("Bouleau_verruqueux","Epicea","Meleze","Lilas","Sorbier","Frene","Noisetier")) , aes(x=estimate, y=term, col=group)) + geom_point() + geom_segment(aes(x=conf.low,xend=conf.high,y=term,yend=term, col=group))+
+  facet_wrap(~espece) + scale_color_manual(values=list("neg"="firebrick3","pos"="dodgerblue3")) + xlim(c(-30,30))+ theme(legend.position = "none")
+
+
+
 
 ############################################################################################-
 # INDICE PHÉNOCLIM BASÉ SUR CES MODÈLES                                                  ----
@@ -1971,7 +2063,7 @@ table(Tperiodes$dept2, Tperiodes$cl_alt)
 
 
 T_pourpred = Tperiodes %>% group_by(dept2, annee, esp, cl_alt,
-                                          cl_alt2, cl_alt3, region1, pays1, nom_massif) %>% summarise(across(ends_with("0624"), mean))
+                                          cl_alt2, cl_alt3, region1, pays1, nom_massif_v2019) %>% summarise(across(c(ends_with("0625"), ends_with("ann")), mean))
 T_pourpred$altitude = as.numeric(as.character(factor(T_pourpred$cl_alt,
                                                   levels = c("150-450", "450-750", "750-1050", "1050-1350", "1350-1650", "1650-1950", "1950-2250"),
                                                   labels = c(300, 600, 900, 1200, 1500, 1800, 2100))))
@@ -1982,23 +2074,42 @@ T_pourpred$altitude = as.numeric(as.character(factor(T_pourpred$cl_alt,
 #           /!\ je n'ai pas fait de modèle pour le tussilage, la primevère et le pin sylvestre !! À voir s'ils sont dans l'indice calculé par Marjo & co
 #         --------------------------------------------------------------------------------------
 
-indice_deb = T_pourpred %>% rename(Tmoy30j = Tmoy30j_med_0624,
-                                   Tmoy40j = Tmoy40j_med_0624,
-                                   Tmoy50j = Tmoy50j_med_0624,
-                                   gel30j = gel30j_med_0624,
-                                   gel40j = gel40j_med_0624,
-                                   gel50j = gel50j_med_0624,
-                                   GDD0 = GDD0_med_0624,
-                                   GDD5 = GDD5_med_0624,
-                                   Tmoyhiv = Tmoyhiv_med_0624,
-                                   dChill = dChill_med_0624,
-                                   year = annee)
+#*  ====================== CHOISIR LA VERSION AVEC LES MÉDIANES DE DÉBOURREMENT ANNUELLES OU PAR PERIODES ======================
+# indice_deb = T_pourpred %>% rename(Tmoy30j = Tmoy30j_med_0625,
+#                                    Tmoy40j = Tmoy40j_med_0625,
+#                                    Tmoy50j = Tmoy50j_med_0625,
+#                                    gel30j = gel30j_med_0625,
+#                                    gel40j = gel40j_med_0625,
+#                                    gel50j = gel50j_med_0625,
+#                                    GDD0 = GDD0_med_0625,
+#                                    GDD5 = GDD5_med_0625,
+#                                    Tmoyhiv = Tmoyhiv_med_0625,
+#                                    dChill = dChill_med_0625,
+#                                    year = annee)
+# indice_deb = T_pourpred %>% rename(Tmoy30j = Tmoy30j_ann,
+#                                    Tmoy40j = Tmoy40j_ann,
+#                                    Tmoy50j = Tmoy50j_ann,
+#                                    gel30j = gel30j_ann,
+#                                    gel40j = gel40j_ann,
+#                                    gel50j = gel50j_ann,
+#                                    GDD0 = GDD0_ann,
+#                                    GDD5 = GDD5_ann,
+#                                    Tmoyhiv = Tmoyhiv_ann,
+#                                    dChill = dChill_ann,
+#                                    year = annee)
+indice_deb = T_pourpred %>% rename_with(~str_replace(.,"_ann","")) %>% rename(year = annee)
+
+#  ==================================================================================================================================== 
 indice_deb$cl_alt = factor(indice_deb$cl_alt, levels=c("150-450","450-750" ,  "750-1050"   ,"1050-1350" , "1350-1650" ,"1650-1950", "1950-2250" ), 
                             ordered = T)
 indice_deb$yearQ = factor(indice_deb$year)
 
 # Chargement des best models
-load("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/bestmods_deb.Rdata") 
+#*  ====================== CHOISIR LA VERSION AVEC LES MÉDIANES DE DÉBOURREMENT ANNUELLES OU PAR PERIODES ======================
+# load("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/bestmods_deb.Rdata") 
+load("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/bestmods_deb___20062025_varTmedann.Rdata")
+#  ==================================================================================================================================== 
+
 # Prédictions
 # RQ : on peut choisir de prédire en prenant en compte les effets aléatoires ou sans. Ici les effets aléatoires sont ID_zone (effet local, qu'on
 #      cherche à lisser en agrégeant par département) et yearQ (effet annuel lié aux spécificités climatiques non prises en compte dans le modèle,
@@ -2023,30 +2134,31 @@ for (esp in c("Bouleau_verruqueux","Noisetier","Frene","Meleze","Epicea","Sorbie
 indice_deb_dept = indice_deb %>% group_by(year, dept2, cl_alt, cl_alt2) %>% summarise(pred_deb_fixef = mean(pred_deb_fixef, na.rm=T),
                                                                                       pred_deb_allef = mean(pred_deb_allef, na.rm=T))
 
-write.csv(indice_deb_dept, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_dept.csv", row.names = F)
+# write.csv(indice_deb_dept, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_dept.csv", row.names = F)
+write.csv(indice_deb_dept, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_dept___20062025_varTmedann.csv", row.names = F)
 
 
-# ggplot(indice_deb_dept, aes(y=year + 0.1*as.numeric(as.character(factor(cl_alt, levels=levels(cl_alt), labels=1:7))), 
+# ggplot(indice_deb_dept, aes(y=year + 0.1*as.numeric(as.character(factor(cl_alt, levels=levels(cl_alt), labels=1:7))),
 #                     x=pred_deb_fixef,
-#                     col=cl_alt)) + 
-#   # geom_rect(aes(ymax = year + 0.5, 
-#   #               ymin = year - 0.5, 
-#   #               xmin = -Inf, 
-#   #               xmax = Inf, color=NULL, 
+#                     col=cl_alt)) +
+#   # geom_rect(aes(ymax = year + 0.5,
+#   #               ymin = year - 0.5,
+#   #               xmin = -Inf,
+#   #               xmax = Inf, color=NULL,
 #   #               fill = factor(ifelse(year %% 2 == 0, 1,0))), alpha = 0.8) + scale_fill_manual(values=c("gray90","white"))+
-#   geom_point(shape=15, size=3) + 
-#   geom_segment(aes(x=pred_deb_fixef, xend=+Inf, 
-#                    y=year + 0.1*as.numeric(as.character(factor(cl_alt, levels=levels(cl_alt), labels=1:7))) , 
+#   geom_point(shape=15, size=3) +
+#   geom_segment(aes(x=pred_deb_fixef, xend=+Inf,
+#                    y=year + 0.1*as.numeric(as.character(factor(cl_alt, levels=levels(cl_alt), labels=1:7))) ,
 #                    yend=year + 0.1*as.numeric(as.character(factor(cl_alt, levels=levels(cl_alt), labels=1:7))),
 #                    col=cl_alt ), lty=2, lwd=0.7)+
 #   # scale_color_manual(values=c("darkorange2","gold2")) +
 #   scale_color_discrete(type=terrain.colors(7))+
 #   # geom_vline(xintercept = 0, col="black") +
-#   scale_y_continuous(breaks=seq(2005,2024, by=1), labels=seq(2005,2024, by=1))+
-#   # scale_x_continuous(breaks=seq(-12,12, by=2), labels=seq(-12,12, by=2)) + 
+#   scale_y_continuous(breaks=seq(2005,2025, by=1), labels=seq(2005,2025, by=1))+
+#   # scale_x_continuous(breaks=seq(-12,12, by=2), labels=seq(-12,12, by=2)) +
 #   labs(x="", y="")   + facet_wrap(~dept2) +
-#   theme(legend.position = "none", 
-#         panel.border = element_blank(),  
+#   theme(legend.position = "none",
+#         panel.border = element_blank(),
 #         panel.grid.major = element_blank(),
 #         panel.grid.minor = element_blank(),
 #         axis.ticks = element_blank())
@@ -2079,42 +2191,88 @@ write.csv(indice_deb_dept, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/Ph
 # température moyenne mesurée une année donnée dans la classe d'altitude x espprot.
 # Pour calculer ces variables de température, on se base sur les reconstructions de température.
 
-Tperiodes = read.csv("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/meteo_reconstruc/varTprintemps_allphenosites.csv")
+Tperiodes = read.csv("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/meteo_reconstruc/varTprintemps_allphenosites.csv", row.names = 1)
 # phenoclim = read.csv("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/Phenoclim_data_cleaned.csv") 
 phenoclim = read.csv("/Users/ninonfontaine/Google Drive/Drive partagés/05. RECHERCHE/06. ANALYSES/Phenoclim/data/_CLEANED_data_pheno.csv")
 
 
 # Espaces protégés considérés : PN Vanoise, PN Écrins, RNs + Parcs italiens du Gran Paradisio (ID = 555580376) et Mont Avic (ID = 555528148) + Espace Mt Blanc
 # => data France : https://data.naturefrance.fr/geonetwork/srv/fre/catalog.search#/metadata/cc1bfe07-625e-4df6-86a2-49fd07d193d7
-RNNs = vect("data/_lim_admin/espaces_proteges/N_ENP_RNN_S_000.shp")
-RNRs = vect("data/_lim_admin/espaces_proteges/N_ENP_RNR_S_000.shp")
-PNs = vect("data/_lim_admin/espaces_proteges/N_ENP_PN_S_000.shp")
-PNRs = vect("data/_lim_admin/espaces_proteges/pnr_polygonPolygon.shp", opts="ENCODING=LATIN1")
+RNNs = vect("data/_lim_admin/espaces_proteges/RNN/N_ENP_RNN_S_000.shp")
+RNRs = vect("data/_lim_admin/espaces_proteges/RNR/N_ENP_RNR_S_000.shp")
+PNs = vect("data/_lim_admin/espaces_proteges/PN/N_ENP_PN_S_000.shp")
+PNRs = vect("data/_lim_admin/espaces_proteges/PNR/pnr_polygonPolygon.shp", opts="ENCODING=LATIN1")
+PNRs = project(PNRs, "epsg:2154")
+geoparkProvence = vect("data/_lim_admin/espaces_proteges/geoparks/PERIMETRE_UGHP.shp") ; geoparkProvence$NAME = "geoparc Provence" # limites transmises par le géoparc Provence
+geoparkChablais = vect("data/_lim_admin/espaces_proteges/geoparks/Limite_SIAC.shp") ; geoparkChablais$NAME = "geoparc Chablais" # limites transmises par le géoparc Chablais
+geoparks = vect(c(geoparkProvence, geoparkChablais))
 # => data Italie : UNEP-WCMC and IUCN (2025), Protected Planet: The World Database on Protected Areas (WDPA) and World Database on Other Effective Area-based Conservation Measures (WD-OECM) [Online], May 2025, Cambridge, UK: UNEP-WCMC and IUCN. Available at: www.protectedplanet.net. 
 ITprot = vect("data/_lim_admin/espaces_proteges/WDPA_WDOECM_May2025_Public_EU_shp_1/WDPA_WDOECM_May2025_Public_EU_shp-polygons.shp")
 ITprot = ITprot[ITprot$WDPAID == 555580376 | ITprot$WDPAID == 555528148,] # On sélectionne uniquement les 2 parcs qui nous intéressent
+ITprot = project(ITprot, "epsg:2154")
 # => Espace Mont Blanc : https://www.espace-mont-blanc.com/asset/img/carte_emb_dl.jpg
 EMB = vect("/Users/ninonfontaine/Google Drive/Drive partagés/05. RECHERCHE/05. DONNEES/Shapefiles/Perim_administratif/EMB/Perimetre_EMB_2017_poly.shp")
 
-espprot = phenoclim[,c("id_base_site","coord_x_2154","coord_y_2154")]
-espprot$espprot_RNN = extract(RNNs, vect(espprot, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$NOM_SITE
-espprot$espprot_RNR = extract(RNRs, vect(espprot, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$NOM_SITE
-espprot$espprot_PN = extract(PNs, vect(espprot, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$NOM_SITE
-espprot$espprot_PNR = extract(project(PNRs, "epsg:2154"), vect(espprot, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$name
-espprot$espprot_ITprot = extract(project(ITprot, "epsg:2154"), vect(espprot, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$NAME
 
-# On groupe tout en une seule variable, puisqu'en théorie il n'y a pas de recoupement RNR / RN / PN /ITprot
+espprot = phenoclim %>% distinct(id_base_site, coord_x_2154, coord_y_2154)
+espprot$espprot_RNN = terra::extract(RNNs, vect(espprot, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$NOM_SITE
+espprot$espprot_RNR = terra::extract(RNRs, vect(espprot, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$NOM_SITE
+espprot$espprot_PN = terra::extract(PNs, vect(espprot, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$NOM_SITE
+espprot$espprot_PNR = terra::extract(PNRs, vect(espprot, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$name
+espprot$espprot_geopark = terra::extract(geoparks, vect(espprot, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$NAME
+espprot$espprot_ITprot = terra::extract(ITprot, vect(espprot, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$NAME
+
+
+# On crée un buffer de 5km autour des espaces, pour prendre en compte les observations limitrophes (sauf pour l'Espace Mont Blanc)
+RNNs_buff5km = buffer(RNNs, 5000)
+RNRs_buff5km = buffer(RNRs, 5000)
+PNs_buff5km = buffer(PNs, 5000)
+PNRs_buff5km = buffer(PNRs, 5000)
+geoparks_buff5km = buffer(geoparks, 5000)
+ITprot_buff5km = buffer(ITprot, 5000)
+
+RNNs_buff5km$nom_utilise = paste("RNN", RNNs_buff5km$NOM_SITE, sep=" ")
+RNRs_buff5km$nom_utilise = paste("RNR", RNRs_buff5km$NOM_SITE, sep=" ")
+PNs_buff5km$nom_utilise = paste("PN", PNs_buff5km$NOM_SITE, sep=" ")
+PNRs_buff5km$nom_utilise = str_replace(PNRs_buff5km$name, "Parc naturel régional","PNR")
+geoparks_buff5km$nom_utilise = geoparks_buff5km$NAME
+ITprot_buff5km$nom_utilise = ITprot_buff5km$NAME
+
+espprot5km = rbind(RNNs_buff5km, RNRs_buff5km, PNs_buff5km, PNRs_buff5km, ITprot_buff5km, geoparks_buff5km)
+espprot_5km = phenoclim %>% distinct(id_base_site, coord_x_2154, coord_y_2154)
+# Pour avoir une colonne par espace protégé + buffer 5km
+for (espaceprot in unique(espprot5km$nom_utilise)){
+  test = terra::extract(espprot5km[espprot5km$nom_utilise == espaceprot], vect(espprot_5km, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$nom_utilise
+  if(dim(table(test))!=0){
+    espprot_5km[,espaceprot] = test
+  }
+}
+
+
+# On groupe tout en une seule variable, puisqu'en théorie il n'y a pas de recoupement RNR / RN / PN /ITprot [/!\ pas tout à fait vrai ! avec la version buffer c'est bon]
 # /!\ l'espace Mont-Blanc doit être considéré séparément !!
-phenoclim$espprot = apply(espprot[,grep("espprot", colnames(espprot))], 1, 
-                          function(x){ifelse(length(x[!is.na(x)])==0,NA,paste(c("RNN","RNR","PN","","")[!is.na(x)],x[!is.na(x)],sep=" "))})
-phenoclim$EMB = extract(project(EMB, "epsg:2154"), vect(phenoclim, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$EMB
-phenoclim$EMB[!is.na(phenoclim$EMB)] = "EMB"
+espprot$espprot = apply(espprot[,grep("espprot", colnames(espprot))], 1, 
+                          function(x){ifelse(length(x[!is.na(x)])==0,NA,paste(c("RNN ","RNR ","PN ","","","")[!is.na(x)],x[!is.na(x)],sep=""))})
+espprot$espprot = str_replace(espprot$espprot, "Parc naturel régional","PNR")
 
+espprot$EMB = terra::extract(project(EMB, "epsg:2154"), vect(espprot, geom=c("coord_x_2154","coord_y_2154"), "epsg:2154"))$EMB
+espprot$EMB[!is.na(espprot$EMB)] = "EMB"
+
+espprot = cbind(espprot, espprot_5km[,-c(1:3)])
+
+
+tab_recap_Phenoclim_x_espprot5km = espprot[,c("id_base_site", "coord_x_2154", "coord_y_2154","espprot","EMB",colnames(espprot_5km[,-c(1:3)]))]
+tab_recap_Phenoclim_x_espprot5km["colnames",] = colnames(tab_recap_Phenoclim_x_espprot5km)
+write.csv(tab_recap_Phenoclim_x_espprot5km, "data/_lim_admin/espaces_proteges/tab_recap_Phenoclim_x_espprot5km.csv")
+
+
+tab_recap_Phenoclim_x_espprot5km= read.csv("data/_lim_admin/espaces_proteges/tab_recap_Phenoclim_x_espprot5km.csv", row.names = 1)
+colnames(tab_recap_Phenoclim_x_espprot5km) = tab_recap_Phenoclim_x_espprot5km["colnames",]
+
+phenoclim = merge(phenoclim, tab_recap_Phenoclim_x_espprot5km %>% dplyr::select(-c(coord_x_2154,coord_y_2154)), by="id_base_site", all.x=T, all.y=F)
 
 Tperiodes = merge(Tperiodes, 
-                  phenoclim[!duplicated(phenoclim$id_base_site),c("id_base_site","altitude","cl_alt","cl_alt2","cl_alt3",
-                                                                  "coord_x_2154", "coord_y_2154",
-                                                                  "dept1","region1","pays1","nom_massif","nom_massif_v2019","espprot","EMB")],
+                  phenoclim[!duplicated(phenoclim$id_base_site),c(colnames(tab_recap_Phenoclim_x_espprot5km),"altitude","cl_alt","cl_alt2","cl_alt3")],
                   by.x="sitePheno", by.y="id_base_site", all.x=T)
 
 
@@ -2124,17 +2282,39 @@ Tperiodes = merge(Tperiodes,
 # table(phenoclim$espprot, phenoclim$year)
 # table(Tperiodes$espprot, Tperiodes$annee)
 
-##########################################################################################################################################-
-# /!\ il n'y a pas des données pour tous les espaces et toutes les années --> ajuster les prédictions !!!
-##########################################################################################################################################-
+T_pourpred = Tperiodes %>% filter(!is.na(EMB)) %>% group_by(EMB, annee, esp, cl_alt, cl_alt2, cl_alt3) %>% 
+  summarise(across(c(ends_with("0625"), ends_with("ann")), mean)) %>% rename(espprot="EMB")
+for(espaceprot in colnames(tab_recap_Phenoclim_x_espprot5km)[-c(1:5)]){
+  T_pourpred = rbind(T_pourpred,
+                     Tperiodes[,colnames(Tperiodes) != "espprot"] %>% rename(espprot=espaceprot) %>% filter(!is.na(espprot)) %>% group_by(espprot, annee, esp, cl_alt, cl_alt2, cl_alt3) %>% 
+                       summarise(across(c(ends_with("0625"), ends_with("ann")), mean)) )
+  
+}
+#---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# /!\ il y a des espaces protégés qui se retrouvent avec des observations lorsqu'on considère un buffer de 5km, mais ce ne sont pas forcément des obs faites par les agents de ces espaces
+#     => à voir si on considère que ça peut inciter à faire des obs DANS les espaces protégés en question !
+#---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
 
-T_pourpred = Tperiodes %>% group_by(espprot, annee, esp, cl_alt,
-                                    cl_alt2, cl_alt3, region1, pays1, nom_massif) %>% summarise(across(ends_with("0624"), mean))
+# T_pourpred = rbind(Tperiodes %>% filter(!is.na(espprot)) %>% group_by(espprot, annee, esp, cl_alt,
+#                                     cl_alt2, cl_alt3, region1, pays1, nom_massif) %>% summarise(across(c(ends_with("0625"), ends_with("ann")), mean)),
+#                    Tperiodes %>% filter(EMB == "EMB") %>% group_by(EMB, annee, esp, cl_alt,
+#                                           cl_alt2, cl_alt3, region1, pays1, nom_massif) %>% summarise(across(c(ends_with("0625"), ends_with("ann")), mean)) %>% rename(espprot="EMB"))
 T_pourpred$altitude = as.numeric(as.character(factor(T_pourpred$cl_alt,
                                                      levels = c("150-450", "450-750", "750-1050", "1050-1350", "1350-1650", "1650-1950", "1950-2250"),
                                                      labels = c(300, 600, 900, 1200, 1500, 1800, 2100))))
+
+
+##########################################################################################################################################-
+# /!\ il n'y a pas des données pour tous les espaces et toutes les années --> ajuster les prédictions ?
+##########################################################################################################################################-
+# pres_obs_espprot = apply(as.matrix(table(phenoclim$espprot, phenoclim$year)),1,function(X){c(2005:2025)[X!=0]}) 
+pres_obs_espprot = apply(phenoclim[,colnames(tab_recap_Phenoclim_x_espprot5km)[-c(1:5)]], 2, function(X){unique(phenoclim$year[!is.na(X)])}) 
+# (pour l'Espace Mont-Blanc on a bien des obs toutes les années, de 2005 à 2025)
+pres_obs_espprot = c(pres_obs_espprot, list("EMB"=2005:2025))
+
+T_pourpred = T_pourpred %>% filter(annee %in% pres_obs_espprot[[espprot]])
 
 
 # On peut donc utiliser les modèles de chaque espèce pour faire les prédictions de débourrement
@@ -2142,23 +2322,19 @@ T_pourpred$altitude = as.numeric(as.character(factor(T_pourpred$cl_alt,
 #           /!\ je n'ai pas fait de modèle pour le tussilage, la primevère et le pin sylvestre !! À voir s'ils sont dans l'indice calculé par Marjo & co
 #         --------------------------------------------------------------------------------------
 
-indice_deb = T_pourpred %>% rename(Tmoy30j = Tmoy30j_med_0624,
-                                   Tmoy40j = Tmoy40j_med_0624,
-                                   Tmoy50j = Tmoy50j_med_0624,
-                                   gel30j = gel30j_med_0624,
-                                   gel40j = gel40j_med_0624,
-                                   gel50j = gel50j_med_0624,
-                                   GDD0 = GDD0_med_0624,
-                                   GDD5 = GDD5_med_0624,
-                                   Tmoyhiv = Tmoyhiv_med_0624,
-                                   dChill = dChill_med_0624,
-                                   year = annee)
+#*  ====================== CHOISIR LA VERSION AVEC LES MÉDIANES DE DÉBOURREMENT ANNUELLES OU PAR PERIODES ======================
+# indice_deb = T_pourpred %>% rename_with(~str_replace(.,"_0625","")) %>% rename(year = annee)
+indice_deb = T_pourpred %>% rename_with(~str_replace(.,"_ann","")) %>% rename(year = annee)
+#  ==================================================================================================================================== 
 indice_deb$cl_alt = factor(indice_deb$cl_alt, levels=c("150-450","450-750" ,  "750-1050"   ,"1050-1350" , "1350-1650" ,"1650-1950", "1950-2250" ), 
                            ordered = T)
 indice_deb$yearQ = factor(indice_deb$year)
 
 # Chargement des best models
-load("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/bestmods_deb.Rdata") 
+#*  ====================== CHOISIR LA VERSION AVEC LES MÉDIANES DE DÉBOURREMENT ANNUELLES OU PAR PERIODES ======================
+# load("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/bestmods_deb.Rdata") 
+load("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/bestmods_deb___20062025_varTmedann.Rdata") 
+#  ==================================================================================================================================== 
 # Prédictions
 # RQ : on peut choisir de prédire en prenant en compte les effets aléatoires ou sans. Ici les effets aléatoires sont ID_zone (effet local, qu'on
 #      cherche à lisser en agrégeant par département) et yearQ (effet annuel lié aux spécificités climatiques non prises en compte dans le modèle,
@@ -2177,26 +2353,122 @@ for (esp in c("Bouleau_verruqueux","Noisetier","Frene","Meleze","Epicea","Sorbie
   }
 }
 
+write.csv(indice_deb, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_espprotbuff5km___20062025_varTmedann__7species.csv", row.names = F)
+# write.csv(indice_deb, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_espprotbuff5km___20062025_varTmedann__allspecies.csv", row.names = F)
+# write.csv(indice_deb_espprot, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_espprot___20062025_varTmedann.csv", row.names = F)
+# write.csv(indice_deb_espprot__selecobs, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_espprot__ouobs.csv", row.names = F)
 
 
 
-indice_deb_espprot__all = indice_deb %>% group_by(year, espprot, cl_alt, cl_alt2) %>% summarise(pred_deb_fixef = mean(pred_deb_fixef, na.rm=T),
+
+
+indice_deb_espprot = indice_deb %>% group_by(year, espprot, cl_alt, cl_alt2) %>% summarise(pred_deb_fixef = mean(pred_deb_fixef, na.rm=T),
                                                                                       pred_deb_allef = mean(pred_deb_allef, na.rm=T),
                                                                                       nb_esp = length(unique(esp)))
-# # Si on veut sélectionner uniquement les prédictions où il y a des données d'observation (pour espèce x année x classe d'altitude) :
-# indice_deb_espprot__selecobs = indice_deb %>% filter(esp %in% phenoclim$species[phenoclim$espprot[phenoclim$cl_alt == cl_alt] == espprot]) %>% 
-#   group_by(year, espprot, cl_alt, cl_alt2) %>% 
-#   summarise(pred_deb_fixef = mean(pred_deb_fixef, na.rm=T),
-#             pred_deb_allef = mean(pred_deb_allef, na.rm=T),
-#             nb_esp = length(unique(esp[esp %in% phenoclim$species[phenoclim$espprot[phenoclim$cl_alt == cl_alt] == espprot]])))
-# ============================= /!\ À CORRIGER POUR QUE ÇA MARCHE !! ============================================================================================-
 
-write.csv(indice_deb_espprot__all, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_espprot__extra.csv", row.names = F)
+write.csv(indice_deb_espprot, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_espprotbuff5km___20062025_varTmedann.csv", row.names = F)
+# write.csv(indice_deb_espprot, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_espprot___20062025_varTmedann.csv", row.names = F)
 # write.csv(indice_deb_espprot__selecobs, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_espprot__ouobs.csv", row.names = F)
+
+
+
+
+indice_deb_Alps = indice_deb %>% group_by(year, cl_alt, cl_alt2) %>% summarise(pred_deb_fixef = mean(pred_deb_fixef, na.rm=T),
+                                                                                           pred_deb_allef = mean(pred_deb_allef, na.rm=T),
+                                                                                           nb_esp = length(unique(esp)))
 
 
 #----- Visualisation des indices par espace protégé
 
+# INFO sur le nombre d'observations réelles pour l'espace en question
+phenoclim_deb = phenoclim %>% filter(pheno_stade_value=="Débourrement")
+INFO = phenoclim_deb %>% filter(species %in% c("Bouleau_verruqueux","Noisetier","Frene","Meleze","Epicea","Sorbier","Lilas")) %>% group_by(espprot) %>% summarise(
+  nb_obs = length(unique(id_base_visit)),
+  nb_arbres = length(unique(id_base_site)),
+  min_annee = min(year),
+  max_annee = max(year)
+)
+# INFO = INFO[INFO$espprot %in% indice_deb_espprot$espprot,]
+
+INFO = rbind(INFO,
+             phenoclim %>% filter(species %in% c("Bouleau_verruqueux","Noisetier","Frene","Meleze","Epicea","Sorbier","Lilas")) %>% filter(!is.na(EMB)) %>% summarise(
+                          espprot = "EMB",
+                          nb_obs = length(unique(id_base_visit)),
+                          nb_arbres = length(unique(id_base_site)),
+                          min_annee = min(year),
+                          max_annee = max(year)
+))
+
+for (espaceprot in colnames(espprot_5km)[-c(1:3)]){
+  # for (espaceprot in INFO$espprot){
+  print(espaceprot)
+  if(espaceprot %in% INFO$espprot){
+    INFO$nb_obs_buff5kminclus[INFO$espprot == espaceprot] = length(unique(phenoclim_deb$id_base_visit[!is.na(phenoclim_deb[,espaceprot])]))
+    INFO$nb_arbres_buff5kminclus[INFO$espprot == espaceprot] = length(unique(phenoclim_deb$id_base_site[!is.na(phenoclim_deb[,espaceprot])]))
+  } else {
+    INFO = rbind(INFO, data.frame(espprot = espaceprot, nb_obs = 0, nb_arbres=0, min_annee=NA, max_annee=NA, 
+                                  nb_obs_buff5kminclus = length(unique(phenoclim_deb$id_base_visit[!is.na(phenoclim_deb[,espaceprot])])), 
+                                  nb_arbres_buff5kminclus = length(unique(phenoclim_deb$id_base_site[!is.na(phenoclim_deb[,espaceprot])]))))
+  }
+}
+INFO = INFO[!is.na(INFO$espprot),]
+
+write.csv(INFO, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_espprotbuff5km___20062025_varTmedann__NBOBS.csv", row.names = F)
+
+# for (espaceprot in colnames(espprot_5km)[-c(1:3)]){
+#   INFO = rbind(INFO,
+#                phenoclim[,colnames(phenoclim) != "espprot"] %>% rename(espprot=espaceprot) %>% filter(!is.na(espprot)) %>% filter(species %in% c("Bouleau_verruqueux","Noisetier","Frene","Meleze","Epicea","Sorbier","Lilas")) %>% summarise(
+#                  nb_obs = length(unique(id_base_visit)),
+#                  nb_arbres = length(unique(id_base_site))
+#                ))
+# }
+# INFO_buff5km = phenoclim %>% filter(species %in% c("Bouleau_verruqueux","Noisetier","Frene","Meleze","Epicea","Sorbier","Lilas")) %>% group_by(espprot) %>% summarise(
+#   nb_obs = length(unique(id_base_visit)),
+#   nb_arbres = length(unique(id_base_site))
+# )
+
+
+#*---------- Pour visualiser la répartition des données sur un territoire donné  ----
+
+stades = grep("Ok 10%",unique(phenoclim$pheno_etape_value), value = T)
+
+# Répartition des données entre années x classe d'altitude x espèces 
+dataheatmap = phenoclim %>% mutate(cl_alt = factor(cl_alt, levels=c("150-450","450-750","750-1050","1050-1350","1350-1650","1650-1950","1950-2250")))
+# [FOCUS territoire et débourrement]
+# exemple : Geoparc Chablais
+ggplot(dataheatmap %>% filter(!is.na(`geoparc Chablais`) & !is.na(cl_alt) & pheno_etape_value=="Debourrement - Ok 10%") %>% group_by(cl_alt,year,species) %>% summarise(nbdata=n(), DOY=mean(julian_day)), 
+       aes(x=year, y=cl_alt, fill=nbdata)) + #fill=DOY
+  geom_tile() +
+  theme_bw()
+ggplot(dataheatmap %>% filter(!is.na(cl_alt) & pheno_etape_value=="Debourrement - Ok 10%") %>% group_by(cl_alt,year,species) %>% summarise(nbdata=n(), DOY=mean(julian_day)), 
+       aes(x=year, y=cl_alt, fill=nbdata)) + #fill=DOY
+  geom_tile() + facet_wrap(~species, nrow=4) +
+  # scale_fill_gradientn(colors = c('darkred', 'darkred', 'orange', 'darkgreen', 'darkgreen'), values = scales::rescale(c(0,5,10,35,60), 0:1)) +
+  theme_bw()
+
+# exemples :
+filtre_massif = list("Alpes" = ifelse(dataheatmap$nom_massif_v2019 == "Alpes","oui","non"),
+              "Alpes du nord" = ifelse(dataheatmap$nom_massif_v2019 == "Alpes" & !(dataheatmap$dept1 %in% c("Hautes-Alpes", "Alpes-de-Haute-Provence","Alpes-Maritimes")),"oui","non"),
+              "Alpes du sud" = ifelse(dataheatmap$dept1 %in% c("Hautes-Alpes", "Alpes-de-Haute-Provence","Alpes-Maritimes"),"oui","non"),
+              "Pyrénées" = ifelse(dataheatmap$nom_massif_v2019 == "Pyrenees","oui","non"),
+              "Jura" = ifelse(dataheatmap$nom_massif_v2019 == "Jura","oui","non"),
+              "Vosges" = ifelse(dataheatmap$nom_massif_v2019 == "Vosges","oui","non"),
+              "Massif central" = ifelse(dataheatmap$nom_massif_v2019 == "Massif_central","oui","non"))
+
+pdf("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/HEATMAP_donnees_deb_parmassif.pdf", width=11, height = 9)
+for (zone in names(filtre_massif)){
+  print(ggplot(dataheatmap[filtre_massif[[zone]]=="oui",] %>% filter(!is.na(cl_alt) & pheno_etape_value=="Debourrement - Ok 10%") %>% 
+           group_by(cl_alt,year,species) %>% summarise(nbdata=n(), DOY=mean(julian_day)), 
+         aes(x=year, y=cl_alt, fill=nbdata)) + #fill=DOY
+    geom_tile() + facet_wrap(~species, nrow=4, ncol=3) +
+    scale_fill_gradientn(colors = c('darkred', 'darkred', 'orange', 'darkgreen', 'darkgreen'), values = scales::rescale(c(0,5,10,35,60), 0:1)) +
+    theme_bw() + scale_y_discrete(limits=c("150-450","450-750","750-1050","1050-1350","1350-1650","1650-1950","1950-2250")) +
+    scale_x_continuous(limits=c(2005,2025)) +
+    labs(title=zone, fill="nb obs.",x="Année",y="Altitude"))
+}
+dev.off()
+
+#*---------- Visualisation des indices PAR ESPACE PROTEGE ----
 indice_deb_espprot$cl_2alt = ifelse(indice_deb_espprot$cl_alt2 == "<1050", "Inf1050", "Sup1050")
 
 indice_deb_espprot_V2 = indice_deb_espprot[!is.na(indice_deb_espprot$espprot),] %>% group_by(espprot,cl_2alt,year) %>% summarise(pred_deb_fixef = mean(pred_deb_fixef),
@@ -2214,7 +2486,9 @@ plot_indice_espprot_fixef = ggplot(indice_deb_espprot_V2,
   geom_rect(aes(ymax = year + 0.5, ymin = year - 0.5, 
                 xmin = -Inf, xmax = Inf, color=NULL, 
                 fill = factor(ifelse(year %% 2 == 0, 1,0))), alpha = 0.8) + scale_fill_manual(values=c("gray90","white"))+
+  geom_hline(yintercept = c(2006:2026)-0.5, col="white", lty=2, lwd=0) +
   geom_vline(xintercept = 0, col="black", lty=2) +
+  geom_vline(xintercept = c(-10,-5,5,10), col="gray40", lty=1, lwd=0.05) +
   geom_point(shape=15, size=2) + 
   geom_segment(aes(x=diff_fixef, xend=+Inf, 
                    y=year + 0.1*as.numeric(as.character(factor(cl_2alt, levels=unique(cl_2alt), labels=c(-1,1)))) , 
@@ -2222,9 +2496,9 @@ plot_indice_espprot_fixef = ggplot(indice_deb_espprot_V2,
                    col=cl_2alt ), lty=3, lwd=0.7)+
   scale_color_manual(values=c("darkgreen","yellowgreen"), breaks=c("Inf1050","Sup1050")) +
   # scale_color_discrete(type=terrain.colors(7))+
-  scale_y_continuous(breaks=seq(2006,2024, by=1), labels=seq(2006,2024, by=1))+
-  # scale_x_continuous(breaks=seq(-12,12, by=2), labels=seq(-12,12, by=2)) + 
-  labs(x="", y="", title = "Indice de débourrement - V2 fixed effects")   + facet_wrap(~espprot) + #xlim(50,170)+
+  scale_y_continuous(breaks=seq(2006,2025, by=1), labels=seq(2006,2025, by=1))+
+  scale_x_continuous(breaks=seq(-10,10, by=5), labels=seq(-10,10, by=5), limits=c(-12,12)) +
+  labs(x="", y="", title = "Indice de débourrement - V2 fixed effects")   + facet_wrap(~espprot, scales="free") + #xlim(50,170)+
   theme(legend.position = "none", 
         panel.border = element_blank(),  
         panel.grid.major = element_blank(),
@@ -2236,7 +2510,9 @@ plot_indice_espprot_allef = ggplot(indice_deb_espprot_V2,
   geom_rect(aes(ymax = year + 0.5, ymin = year - 0.5, 
                 xmin = -Inf, xmax = Inf, color=NULL, 
                 fill = factor(ifelse(year %% 2 == 0, 1,0))), alpha = 0.8) + scale_fill_manual(values=c("gray90","white"))+
+  geom_hline(yintercept = c(2006:2026)-0.5, col="white", lty=2, lwd=0) +
   geom_vline(xintercept = 0, col="black", lty=2) +
+  geom_vline(xintercept = c(-10,-5,5,10), col="gray40", lty=1, lwd=0.05) +
   geom_point(shape=15, size=2) + 
   geom_segment(aes(x=diff_allef, xend=+Inf, 
                    y=year + 0.1*as.numeric(as.character(factor(cl_2alt, levels=unique(cl_2alt), labels=c(-1,1)))) , 
@@ -2244,9 +2520,9 @@ plot_indice_espprot_allef = ggplot(indice_deb_espprot_V2,
                    col=cl_2alt ), lty=3, lwd=0.7)+
   scale_color_manual(values=c("darkgreen","yellowgreen"), breaks=c("Inf1050","Sup1050")) +
   # scale_color_discrete(type=terrain.colors(7))+
-  scale_y_continuous(breaks=seq(2006,2024, by=1), labels=seq(2006,2024, by=1))+
-  # scale_x_continuous(breaks=seq(-12,12, by=2), labels=seq(-12,12, by=2)) + 
-  labs(x="", y="", title = "Indice de débourrement - V2 all effects")   + facet_wrap(~espprot) + #xlim(50,170)+
+  scale_y_continuous(breaks=seq(2006,2025, by=1), labels=seq(2006,2025, by=1))+
+  scale_x_continuous(breaks=seq(-10,10, by=5), labels=seq(-10,10, by=5), limits=c(-12,12)) +
+  labs(x="", y="", title = "Indice de débourrement - V2 all effects")   + facet_wrap(~espprot, scales="free") + #xlim(50,170)+
   theme(legend.position = "none", 
         panel.border = element_blank(),  
         panel.grid.major = element_blank(),
@@ -2255,11 +2531,128 @@ plot_indice_espprot_allef = ggplot(indice_deb_espprot_V2,
 
 
 
-pdf("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_espprot.pdf", width=12, height = 10)
+
+pdf("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_espprotbuff5km___20062025_varTmedann_7esp.pdf", width=25, height = 35)
+# pdf("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_espprot___20062025_varTmedann.pdf", width=15, height = 17)
+grid.table(INFO, rows=NULL)
 plot_indice_espprot_fixef ; plot_indice_espprot_allef
 dev.off()
 
 
+#*---------- Visualisation des indices POUR TOUTES LES ALPES ----
+
+indice_deb_Alps$cl_2alt = ifelse(indice_deb_Alps$cl_alt2 == "<1050", "Inf1050", "Sup1050")
+
+indice_deb_Alps_V2 = indice_deb_Alps %>% group_by(cl_2alt,year) %>% summarise(pred_deb_fixef = mean(pred_deb_fixef),
+                                                                                                             pred_deb_allef = mean(pred_deb_allef))
+indice_deb_Alps_V2 = merge(indice_deb_Alps_V2,
+                              indice_deb_Alps %>% group_by(cl_2alt) %>% summarise(pred_deb_fixef_ref = mean(pred_deb_fixef),
+                                                                                             pred_deb_allef_ref = mean(pred_deb_allef)),
+                              by=c("cl_2alt"))
+indice_deb_Alps_V2$diff_allef = indice_deb_Alps_V2$pred_deb_allef - indice_deb_Alps_V2$pred_deb_allef_ref
+indice_deb_Alps_V2$diff_fixef = indice_deb_Alps_V2$pred_deb_fixef - indice_deb_Alps_V2$pred_deb_fixef_ref
+
+plot_indice_Alps_fixef = ggplot(indice_deb_Alps_V2, 
+                                   aes(y=year + 0.1*as.numeric(as.character(factor(cl_2alt, levels=unique(cl_2alt), labels=c(-1,1)))), 
+                                       x=diff_fixef, col=cl_2alt)) + 
+  geom_rect(aes(ymax = year + 0.5, ymin = year - 0.5, 
+                xmin = -Inf, xmax = Inf, color=NULL, 
+                fill = factor(ifelse(year %% 2 == 0, 1,0))), alpha = 0.8) + scale_fill_manual(values=c("gray90","white"))+
+  geom_vline(xintercept = 0, col="black", lty=2) +
+  geom_vline(xintercept = c(-10,-5,5,10), col="gray40", lty=1, lwd=0.05) +
+  geom_point(shape=15, size=2) + 
+  geom_segment(aes(x=diff_fixef, xend=+Inf, 
+                   y=year + 0.1*as.numeric(as.character(factor(cl_2alt, levels=unique(cl_2alt), labels=c(-1,1)))) , 
+                   yend=year + 0.1*as.numeric(as.character(factor(cl_2alt, levels=unique(cl_2alt), labels=c(-1,1)))),
+                   col=cl_2alt ), lty=3, lwd=0.7)+
+  scale_color_manual(values=c("darkgreen","yellowgreen"), breaks=c("Inf1050","Sup1050")) +
+  # scale_color_discrete(type=terrain.colors(7))+
+  scale_y_continuous(breaks=seq(2006,2025, by=1), labels=seq(2006,2025, by=1))+
+  scale_x_continuous(breaks=seq(-10,10, by=5), labels=seq(-10,10, by=5), limits=c(-12,12)) +
+  labs(x="", y="", title = "Indice de débourrement - V2 fixed effects")  +
+  theme(legend.position = "none", 
+        panel.border = element_blank(),  
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.ticks = element_blank())
+plot_indice_Alps_allef = ggplot(indice_deb_Alps_V2, 
+                                   aes(y=year + 0.1*as.numeric(as.character(factor(cl_2alt, levels=unique(cl_2alt), labels=c(-1,1)))), 
+                                       x=diff_allef, col=cl_2alt)) + 
+  geom_rect(aes(ymax = year + 0.5, ymin = year - 0.5, 
+                xmin = -Inf, xmax = Inf, color=NULL, 
+                fill = factor(ifelse(year %% 2 == 0, 1,0))), alpha = 0.8) + scale_fill_manual(values=c("gray90","white"))+
+  geom_vline(xintercept = 0, col="black", lty=2) +
+  geom_vline(xintercept = c(-10,-5,5,10), col="gray40", lty=1, lwd=0.05) +
+  geom_point(shape=15, size=2) + 
+  geom_segment(aes(x=diff_allef, xend=+Inf, 
+                   y=year + 0.1*as.numeric(as.character(factor(cl_2alt, levels=unique(cl_2alt), labels=c(-1,1)))) , 
+                   yend=year + 0.1*as.numeric(as.character(factor(cl_2alt, levels=unique(cl_2alt), labels=c(-1,1)))),
+                   col=cl_2alt ), lty=3, lwd=0.7)+
+  scale_color_manual(values=c("darkgreen","yellowgreen"), breaks=c("Inf1050","Sup1050")) +
+  # scale_color_discrete(type=terrain.colors(7))+
+  scale_y_continuous(breaks=seq(2006,2025, by=1), labels=seq(2006,2025, by=1))+
+  scale_x_continuous(breaks=seq(-10,10, by=5), labels=seq(-10,10, by=5), limits=c(-12,12)) +
+  labs(x="", y="", title = "Indice de débourrement - V2 all effects")   + 
+  theme(legend.position = "none", 
+        panel.border = element_blank(),  
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.ticks = element_blank())
+
+
+pdf("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_Alps___20062025_varTmedann.pdf", width=4, height = 5)
+plot_indice_Alps_fixef ; plot_indice_Alps_allef
+dev.off()
+
+
+#*---------- Spécificités météo dans les Alpes ? ----
+
+# # Test sur la température moyenne hivernale
+# TestTmoy = Tperiodes %>% group_by(annee) %>% summarise(Tmoyhiv = mean(Tmoyhiv_ann),
+#                                                           Tmoy30j = mean(Tmoy30j_ann))
+# ggplot(TestTmoy, aes(x=annee, y=Tmoyhiv)) + geom_point()
+# ggplot(TestTmoy, aes(x=annee, y=Tmoy30j)) + geom_point()
+
+# Test sur les températures moyennes dans les Alpes, basées sur la reconstruction
+
+output = data.frame(matrix(ncol=6)) # Tmin, max, moy ?
+colnames(output) = c("sitePheno","mois","Tmoy","Tmin","Tmax","annee")
+# debourr_Alps[,paste0(varTselec,"_",rep(colnames(dates_deb_med)[-1],each=length(varTselec)))] = NA
+
+vartabT = c("station_name","Tair_moy", "Tair_min", "Tair_max")
+
+for(annee in c(2006:2025)){#unique(debourr_Alps$year)){
+  print(annee)
+  reconstruc_Tday_sites = read.csv(paste0("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/meteo_reconstruc/",annee,"_Tairday_SitesPheno_reconstruit.csv"))
+  reconstruc_Tday_sites$mois = month(as.Date(reconstruc_Tday_sites$date))
+  tabT = rename(reconstruc_Tday_sites, c(sitePheno=vartabT[1], T=vartabT[2], Tmin=vartabT[3], Tmax=vartabT[4]))
+  
+  Tcalc = tabT %>% group_by(sitePheno, mois) %>%
+    summarise(Tmoy = mean(T, na.rm=T),
+              Tmin = mean(Tmin, na.rm=T),
+              Tmax = mean(Tmax, na.rm=T))
+  
+  Tcalc$annee = annee
+  
+  output = rbind(output, Tcalc)
+}
+
+write.csv(output, "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/meteo_reconstruc/Tmensuelles_reconstruites.csv")
+
+output$annee_type = ifelse(output$annee %in% c(2007,2011,2017),"pheno exceptionnelle","normale")
+# ggplot(output[!is.na(output$sitePheno),], aes(y=annee, x=Tmoy, col=annee_type)) + geom_point() + facet_wrap(~mois)
+ggplot(output[!is.na(output$sitePheno),], aes(group=annee, x=Tmoy,col=annee_type)) + geom_boxplot() + facet_wrap(~mois)
+ggplot(output[!is.na(output$sitePheno),], aes(group=annee, x=Tmin,col=annee_type)) + geom_boxplot()+
+  geom_vline(xintercept = (output %>% group_by(mois) %>% summarise(MEAN = mean(Tmin)))$MEAN) + facet_wrap(~mois) + theme(legend.position = "none")
+
+ggplot(output[!is.na(output$sitePheno) & output$mois %in% c(3:5),], aes(group=annee, x=Tmin,col=annee_type)) + geom_boxplot()+ labs(title = "Printemps") + scale_color_manual(values=c("black","red"))+
+  theme(legend.position = "none")+ 
+  geom_vline(xintercept = (output[!is.na(output$sitePheno) & output$mois %in% c(3:5),] %>% summarise(MEAN = mean(Tmin)))$MEAN) + 
+  geom_vline(xintercept = (output[!is.na(output$sitePheno) & output$mois %in% c(3:5) & output$annee %in% c(2007,2011,2017),] %>% summarise(MEAN = mean(Tmin)))$MEAN, col="red") 
+ggplot(output[!is.na(output$sitePheno) & output$mois %in% c(3:5),], aes(group=annee, x=Tmoy,col=annee_type)) + geom_boxplot()+ labs(title = "Printemps") + scale_color_manual(values=c("black","red"))+
+  theme(legend.position = "none")+ 
+  geom_vline(xintercept = (output[!is.na(output$sitePheno) & output$mois %in% c(3:5),] %>% summarise(MEAN = mean(Tmoy)))$MEAN) + 
+  geom_vline(xintercept = (output[!is.na(output$sitePheno) & output$mois %in% c(3:5) & output$annee %in% c(2007,2011,2017),] %>% summarise(MEAN = mean(Tmoy)))$MEAN, col="red") 
 
 
 
@@ -2316,7 +2709,7 @@ plot_indice_v1 = ggplot(indice_deb_V1_dept,
                    col=cl_2alt.x ), lty=3, lwd=0.7)+
   scale_color_manual(values=c("darkgreen","yellowgreen"), breaks=c("Inf1050","Sup1050")) +
   # scale_color_discrete(type=terrain.colors(7))+
-  scale_y_continuous(breaks=seq(2006,2024, by=1), labels=seq(2006,2024, by=1))+
+  scale_y_continuous(breaks=seq(2006,2025, by=1), labels=seq(2006,2025, by=1))+
   # scale_x_continuous(breaks=seq(-12,12, by=2), labels=seq(-12,12, by=2)) + 
   labs(x="", y="", title = "Indice de débourrement - V1")   + facet_wrap(~dept1.x) + #xlim(50,170) +
   theme(legend.position = "none", 
@@ -2338,7 +2731,7 @@ plot_indice_v2_fixef = ggplot(indice_deb_V2_dept[indice_deb_V2_dept$dept2 %in% i
                    col=cl_2alt ), lty=3, lwd=0.7)+
   scale_color_manual(values=c("darkgreen","yellowgreen"), breaks=c("Inf1050","Sup1050")) +
   # scale_color_discrete(type=terrain.colors(7))+
-  scale_y_continuous(breaks=seq(2006,2024, by=1), labels=seq(2006,2024, by=1))+
+  scale_y_continuous(breaks=seq(2006,2025, by=1), labels=seq(2006,2025, by=1))+
   # scale_x_continuous(breaks=seq(-12,12, by=2), labels=seq(-12,12, by=2)) + 
   labs(x="", y="", title = "Indice de débourrement - V2 fixed effects")   + facet_wrap(~dept2) + #xlim(50,170)+
   theme(legend.position = "none", 
@@ -2360,7 +2753,7 @@ plot_indice_v2_allef = ggplot(indice_deb_V2_dept[indice_deb_V2_dept$dept2 %in% i
                    col=cl_2alt ), lty=3, lwd=0.7)+
   scale_color_manual(values=c("darkgreen","yellowgreen"), breaks=c("Inf1050","Sup1050")) +
   # scale_color_discrete(type=terrain.colors(7))+
-  scale_y_continuous(breaks=seq(2006,2024, by=1), labels=seq(2006,2024, by=1))+
+  scale_y_continuous(breaks=seq(2006,2025, by=1), labels=seq(2006,2025, by=1))+
   # scale_x_continuous(breaks=seq(-12,12, by=2), labels=seq(-12,12, by=2)) + 
   labs(x="", y="", title = "Indice de débourrement - V2 all effects")   + facet_wrap(~dept2) + #xlim(50,170)+
   theme(legend.position = "none", 
@@ -2369,7 +2762,7 @@ plot_indice_v2_allef = ggplot(indice_deb_V2_dept[indice_deb_V2_dept$dept2 %in% i
         panel.grid.minor = element_blank(),
         axis.ticks = element_blank())
 
-pdf("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_dept.pdf", width=12, height = 10)
+pdf("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/indice_deb_dept___20062025_varTmedann.pdf", width=12, height = 10)
 plot_indice_v1 ; plot_indice_v2_fixef ; plot_indice_v2_allef
 dev.off()
 
@@ -2536,4 +2929,36 @@ coeff_cat = rbind(coeff_cat, coef[,colnames(coeff_cat)])
 
 
 write.csv(coeff_cat[-1,], "/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/resultats_modeles_deb__coeff_entrecateg.csv", row.names = F)
+
+
+
+############################################################################################-
+# RETARD OU PRÉCOCITÉ SELON LES ESPÈCES : EFFET RÉSIDUEL DE L'ANNÉE SUR LA PHÉNOLOGIE   ----
+############################################################################################-
+
+
+# Initialisation : chargement des modèles et sélection des données
+load("/Users/ninonfontaine/Desktop/projetsR/TEST/output/PhenoClim/bestmods_deb.Rdata")
+deb = debourr_Alps[!is.na(debourr_Alps$Tmoy30j),]
+
+resid_yr = data.frame(species = names(bestmods), coeff_yr = NA, std_yr = NA, pval_yr = NA)
+
+# Boucle pour toutes les espèces
+for (sp in resid_yr$species){
+  deb_sp = deb[deb$species == sp,]
+  if (sp %in% c("Meleze","Epicea")){deb_sp = deb_sp[deb_sp$cl_alt != "150-450",]}
+  if (sp %in% c("Sorbier")){deb_sp = deb_sp[!is.na(deb_sp$altitude),]}
+  if (sp %in% c("Pin")){deb_sp = deb_sp[deb_sp$julian_day > 50,]}
+  resid_yr$coeff_yr[resid_yr$species == sp] = coef(summary(lm(resid(bestmods[[sp]]) ~ deb_sp$year)))[2,1]
+  resid_yr$std_yr[resid_yr$species == sp] = coef(summary(lm(resid(bestmods[[sp]]) ~ deb_sp$year)))[2,2]
+  resid_yr$pval_yr[resid_yr$species == sp] = coef(summary(lm(resid(bestmods[[sp]]) ~ deb_sp$year)))[2,4]
+  
+}
+
+# => rien n'est significatif, mais on peut classer les espèces selon le type de réponse (avance / retard)
+ggplot(resid_yr %>% filter(!(species %in% c("Bouleau_pubescent","Hetre","Pin","Sapin"))), aes(x=reorder(species, coeff_yr))) + 
+  geom_point(aes(y=coeff_yr)) + 
+  geom_segment(aes(y=coeff_yr-std_yr, yend=coeff_yr+std_yr)) + 
+  geom_hline(yintercept = 0, linetype = 2) + coord_flip() + labs(x="", y="tendance à l'avancée ou au retard du débourrement d'année en année")
+
 
